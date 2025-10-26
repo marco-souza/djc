@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"marco-souza/djc/internal/shared"
+	"strings"
 
 	yt "github.com/lrstanley/go-ytdlp"
 )
@@ -19,6 +20,10 @@ func DownloadAudio(url string, ext string, tr *shared.TimeRange) error {
 		AudioFormat(ext).
 		AudioQuality("0").
 		Output("%(playlist)s/%(title)s")
+
+	if strings.Contains(url, "/playlist") {
+		dl.YesPlaylist()
+	}
 
 	if tr != nil {
 		fmt.Println("Time range:", tr.String())

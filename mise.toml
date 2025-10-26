@@ -1,0 +1,7 @@
+[tools]
+go = "latest"
+
+[tasks]
+install = "go install ."
+
+
