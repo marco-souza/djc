@@ -4,42 +4,19 @@ Copyright © 2025 Marco Souza <marco@tremtec.com>
 package cmd
 
 import (
-	"fmt"
-	"marco-souza/djc/internal/shared"
-	"marco-souza/djc/internal/youtube"
-	"os"
-
 	"github.com/spf13/cobra"
 )
 
-var ext string
-var start string
-var end string
-
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
+	Use:   "djc",
 	Short: "A CLI toolbox for DJing",
-	Use:   "djc <youtube url>",
-	Args:  cobra.MinimumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		youtubeURL := args[0]
-		fmt.Println("Downloading from URL:", youtubeURL)
-
-		tr := shared.NewTimeRange(start, end)
-
-		youtube.DownloadAudio(youtubeURL, ext, tr)
-	},
+	Long:  `djc is a CLI tool for DJs to download and manage music from YouTube.`,
 }
 
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
-		os.Exit(1)
+		panic(err)
 	}
-}
-
-func init() {
-	rootCmd.Flags().StringVarP(&ext, "ext", "x", "", "Specify audio extension (default: flac)")
-	rootCmd.Flags().StringVarP(&start, "start", "s", "", "Specify start time (format: HH:MM:SS.ms)")
-	rootCmd.Flags().StringVarP(&end, "end", "e", "", "Specify end time (format: HH:MM:SS.ms)")
 }
