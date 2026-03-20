@@ -3,23 +3,27 @@ package youtube
 import (
 	"context"
 	"fmt"
+	"marco-souza/djc/internal/config"
 	"marco-souza/djc/internal/shared"
 	"strings"
 
 	yt "github.com/lrstanley/go-ytdlp"
 )
 
-func DownloadAudio(url string, ext string, tr *shared.TimeRange) error {
+func DownloadAudio(url string, ext string, tr *shared.TimeRange, cfg *config.Config) error {
 	if len(ext) == 0 {
-		ext = "flac"
+		ext = cfg.AudioFormat
 	}
+
+	// Build full output path with download directory
+	outputPath := cfg.DownloadDir + "/" + cfg.OutputTemplate
 
 	// download builder
 	dl := yt.New().
 		ExtractAudio().
 		AudioFormat(ext).
-		AudioQuality("0").
-		Output("%(playlist)s/%(title)s")
+		AudioQuality(cfg.AudioQuality).
+		Output(outputPath)
 
 	if strings.Contains(url, "/playlist") {
 		dl.YesPlaylist()
