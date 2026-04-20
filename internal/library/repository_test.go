@@ -14,7 +14,7 @@ func TestRepositorySongLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = repo.Close() })
 
-	created, err := repo.CreateSong("https://youtube.com/watch?v=abc", "flac")
+	created, err := repo.CreateSong("https://youtube.com/watch?v=abc", "flac", "downloading")
 	require.NoError(t, err)
 	assert.Equal(t, "downloading", created.Status)
 	assert.Equal(t, 0, created.Progress)

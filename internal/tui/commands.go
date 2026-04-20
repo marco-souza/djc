@@ -28,16 +28,43 @@ func refreshSongsCmd(repo *library.Repository) tea.Cmd {
 	}
 }
 
-func startDownloadCmd(repo *library.Repository, cfg *config.Config, url string) tea.Cmd {
+// fetchMetadataCmd queries yt-dlp for video/playlist info without downloading.
+func fetchMetadataCmd(url string) tea.Cmd {
 	return func() tea.Msg {
-		song, err := repo.CreateSong(url, cfg.AudioFormat)
-		if err != nil {
-			return actionDoneMsg{err: err}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		items, err := youtube.FetchMetadata(ctx, url)
+		return metadataFetchedMsg{items: items, url: url, err: err}
+	}
+}
+
+// createQueuedDownloadsCmd creates Song rows in the DB for each item (status "queued")
+// and returns a downloadsQueuedMsg so the TUI can enqueue and display them.
+func createQueuedDownloadsCmd(repo *library.Repository, cfg *config.Config, items []youtube.VideoInfo) tea.Cmd {
+	return func() tea.Msg {
+		songs := make([]library.Song, 0, len(items))
+		urls := make([]string, 0, len(items))
+		for _, item := range items {
+			song, err := repo.CreateSong(item.URL, cfg.AudioFormat, "queued")
+			if err != nil {
+				return actionDoneMsg{err: fmt.Errorf("create queued song: %w", err)}
+			}
+			songs = append(songs, song)
+			urls = append(urls, item.URL)
 		}
+		return downloadsQueuedMsg{songs: songs, urls: urls}
+	}
+}
+
+// startQueuedDownloadCmd starts downloading a song that is already in the DB
+// (created with status "queued"). It sets reDownload=true so the TUI updates
+// the existing row instead of prepending a duplicate.
+func startQueuedDownloadCmd(repo *library.Repository, cfg *config.Config, queued queuedDownload) tea.Cmd {
+	return func() tea.Msg {
 		ch := make(chan downloadEvent)
 		ctx, cancel := context.WithCancel(context.Background())
-		go downloadSong(ctx, repo, cfg, song, url, ch)
-		return downloadStartedMsg{Song: song, ch: ch, cancel: cancel}
+		go downloadSong(ctx, repo, cfg, queued.Song, queued.URL, ch)
+		return downloadStartedMsg{Song: queued.Song, ch: ch, cancel: cancel, reDownload: true}
 	}
 }
 
@@ -83,7 +110,7 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 						track = &trackState{id: song.ID}
 					} else {
 						// Create a new Song row for this track.
-						newSong, createErr := repo.CreateSong(url, cfg.AudioFormat)
+						newSong, createErr := repo.CreateSong(url, cfg.AudioFormat, "downloading")
 						if createErr != nil {
 							ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("create playlist song: %w", createErr)}
 							return

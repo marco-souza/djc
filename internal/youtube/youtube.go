@@ -2,6 +2,7 @@ package youtube
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -14,6 +15,102 @@ import (
 
 	yt "github.com/lrstanley/go-ytdlp"
 )
+
+// VideoInfo holds lightweight metadata for a single video (fetched without downloading).
+type VideoInfo struct {
+	Title    string
+	URL      string
+	Duration float64 // seconds; 0 if unknown
+}
+
+// FetchMetadata retrieves video or playlist metadata without downloading.
+// For playlists it returns one VideoInfo per entry; for single videos it
+// returns a single-element slice.
+func FetchMetadata(ctx context.Context, rawURL string) ([]VideoInfo, error) {
+	installOnce.Do(func() {
+		installCtx, cancel := context.WithTimeout(context.Background(), ytdlpInstallTimeout)
+		defer cancel()
+		yt.MustInstall(installCtx, &yt.InstallOptions{})
+	})
+
+	dl := yt.New().
+		DumpSingleJSON().
+		NoWarnings()
+
+	if IsPlaylistURL(rawURL) {
+		dl.YesPlaylist().FlatPlaylist()
+	} else {
+		dl.NoPlaylist()
+	}
+
+	proc, err := dl.Run(ctx, rawURL)
+	if err != nil {
+		if proc != nil {
+			return nil, fmt.Errorf("fetch metadata: %s - %s", err, proc.Stderr)
+		}
+		return nil, fmt.Errorf("fetch metadata: %w", err)
+	}
+
+	stdout := strings.TrimSpace(proc.Stdout)
+	if stdout == "" {
+		return nil, fmt.Errorf("fetch metadata: no output from yt-dlp")
+	}
+
+	// --dump-single-json emits one JSON blob to stdout.
+	var raw struct {
+		Title      *string  `json:"title"`
+		Duration   *float64 `json:"duration"`
+		WebpageURL *string  `json:"webpage_url"`
+		Entries    []struct {
+			ID         string   `json:"id"`
+			Title      *string  `json:"title"`
+			Duration   *float64 `json:"duration"`
+			URL        *string  `json:"url"`
+			WebpageURL *string  `json:"webpage_url"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		return nil, fmt.Errorf("fetch metadata: parse JSON: %w", err)
+	}
+
+	if len(raw.Entries) > 0 {
+		items := make([]VideoInfo, 0, len(raw.Entries))
+		for _, e := range raw.Entries {
+			item := VideoInfo{}
+			if e.Title != nil {
+				item.Title = *e.Title
+			}
+			if e.Duration != nil {
+				item.Duration = *e.Duration
+			}
+			switch {
+			case e.WebpageURL != nil:
+				item.URL = *e.WebpageURL
+			case e.URL != nil && strings.HasPrefix(*e.URL, "http"):
+				item.URL = *e.URL
+			case e.ID != "":
+				item.URL = "https://www.youtube.com/watch?v=" + e.ID
+			default:
+				item.URL = rawURL
+			}
+			items = append(items, item)
+		}
+		return items, nil
+	}
+
+	// Single video.
+	item := VideoInfo{URL: rawURL}
+	if raw.Title != nil {
+		item.Title = *raw.Title
+	}
+	if raw.Duration != nil {
+		item.Duration = *raw.Duration
+	}
+	if raw.WebpageURL != nil {
+		item.URL = *raw.WebpageURL
+	}
+	return []VideoInfo{item}, nil
+}
 
 var installOnce sync.Once
 

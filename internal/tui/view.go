@@ -20,6 +20,8 @@ func (m Model) View() string {
 	switch m.mode {
 	case modeAdd:
 		return m.viewAdd()
+	case modeConfirm:
+		return m.viewConfirm()
 	case modeDelete:
 		return m.viewDelete()
 	case modeConfig:
@@ -101,7 +103,119 @@ func (m Model) viewAdd() string {
 	)
 }
 
-// viewDelete renders a centered delete confirmation modal.
+// viewConfirm renders the confirmation / playlist-select modal.
+// While metadata is loading (confirmItems == nil) it shows a spinner.
+// For a single video it shows a simple confirm prompt.
+// For playlists it shows a scrollable multi-select checklist.
+func (m Model) viewConfirm() string {
+	modalW := max(64, m.width*2/3)
+	innerW := modalW - 8 // subtract border(2) + padding(3+3)
+
+	var lines []string
+
+	if m.confirmItems == nil {
+		// ── loading ───────────────────────────────────────────────────────
+		lines = []string{
+			sTitle.Render("  Fetching info…"),
+			"",
+			"  " + m.spinner.View() + "  Please wait…",
+			"",
+		}
+	} else if len(m.confirmItems) == 1 {
+		// ── single video confirm ──────────────────────────────────────────
+		item := m.confirmItems[0]
+		name := item.Title
+		if name == "" {
+			name = "(title unknown)"
+		}
+		lines = []string{
+			sTitle.Render("  Download?"),
+			"",
+			"  " + sBright.Render(truncate(name, innerW-4)),
+		}
+		if item.Duration > 0 {
+			lines = append(lines, "  "+sMuted.Render("Duration: ")+
+				formatDuration(time.Duration(item.Duration)*time.Second))
+		}
+		lines = append(lines,
+			"",
+			sMuted.Render("  enter: download  •  esc: back"),
+		)
+	} else {
+		// ── playlist multi-select ─────────────────────────────────────────
+		selectedCount := 0
+		for _, s := range m.confirmSel {
+			if s {
+				selectedCount++
+			}
+		}
+
+		lines = append(lines,
+			sTitle.Render(fmt.Sprintf("  Select songs  (%d tracks)", len(m.confirmItems))),
+			"",
+		)
+
+		end := m.confirmOffset + confirmModalMaxItems
+		if end > len(m.confirmItems) {
+			end = len(m.confirmItems)
+		}
+		for i := m.confirmOffset; i < end; i++ {
+			item := m.confirmItems[i]
+
+			cursorStr := "  "
+			if i == m.confirmCursor {
+				cursorStr = "▶ "
+			}
+			check := "[ ]"
+			if i < len(m.confirmSel) && m.confirmSel[i] {
+				check = "[x]"
+			}
+			title := item.Title
+			if title == "" {
+				title = "(untitled)"
+			}
+			dur := ""
+			if item.Duration > 0 {
+				dur = "  " + formatDuration(time.Duration(item.Duration)*time.Second)
+			}
+			row := cursorStr + check + " " + truncate(title, innerW-10) + dur
+
+			switch {
+			case i == m.confirmCursor:
+				lines = append(lines, sSel.Render(row))
+			case i < len(m.confirmSel) && m.confirmSel[i]:
+				lines = append(lines, sGreen.Render(row))
+			default:
+				lines = append(lines, sMuted.Render(row))
+			}
+		}
+
+		// Scroll indicator when list is longer than the visible window.
+		if len(m.confirmItems) > confirmModalMaxItems {
+			pct := 0
+			if len(m.confirmItems) > 1 {
+				pct = (m.confirmCursor * 100) / (len(m.confirmItems) - 1)
+			}
+			lines = append(lines, sMuted.Render(fmt.Sprintf("  ── %d%% ──", pct)))
+		}
+
+		lines = append(lines,
+			"",
+			sMuted.Render(fmt.Sprintf("  %d of %d selected", selectedCount, len(m.confirmItems))),
+			"",
+			sMuted.Render("  j/k: navigate  spc: toggle  a: all  n: none  enter: download  esc: back"),
+		)
+	}
+
+	content := strings.Join(lines, "\n")
+	box := sModal.Width(modalW).Render(content)
+
+	return lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(clrMuted),
+	)
+}
 func (m Model) viewDelete() string {
 	songName := "unknown"
 	if len(m.songs) > 0 {
@@ -315,6 +429,8 @@ func (m Model) renderRow(idx, w int) string {
 	switch {
 	case strings.HasPrefix(song.Status, "failed"):
 		return sFailed.Width(w).Render(line)
+	case song.Status == "queued":
+		return sQueued.Width(w).Render(line)
 	case song.Status == "downloading":
 		return sDling.Width(w).Render(line)
 	default:
@@ -331,6 +447,8 @@ func (m Model) rowStatus(song library.Song, width int) string {
 		return truncate("▶ playing", width)
 	}
 	switch {
+	case song.Status == "queued":
+		return truncate("⧗ in queue", width)
 	case song.Status == "downloading":
 		bar := m.downloadProgress.ViewAs(float64(song.Progress) / 100)
 		pct := fmt.Sprintf("%3d%%", song.Progress)
@@ -396,6 +514,8 @@ func (m Model) renderHelp() string {
 
 func formatSongStatus(song library.Song) string {
 	switch {
+	case song.Status == "queued":
+		return "In Queue"
 	case song.Status == "downloading":
 		return fmt.Sprintf("Downloading… %d%%", song.Progress)
 	case song.Status == "downloaded":

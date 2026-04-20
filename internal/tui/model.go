@@ -7,6 +7,7 @@ import (
 
 "marco-souza/djc/internal/config"
 "marco-souza/djc/internal/library"
+"marco-souza/djc/internal/youtube"
 
 "github.com/charmbracelet/bubbles/help"
 "github.com/charmbracelet/bubbles/progress"
@@ -32,6 +33,16 @@ pendingD bool
 
 // add modal
 addInput textinput.Model
+
+// confirm modal
+confirmURL    string
+confirmItems  []youtube.VideoInfo // nil = still loading
+confirmSel    []bool
+confirmCursor int
+confirmOffset int
+
+// download queue (processed one at a time)
+downloadQueue []queuedDownload
 
 // delete confirmation: true = "Delete" button selected, false = "Cancel"
 deleteConf bool

@@ -36,6 +36,7 @@ var (
 
 	sNormal = lipgloss.NewStyle().Foreground(clrSubtle)
 	sDling  = lipgloss.NewStyle().Foreground(clrYellow)
+	sQueued = lipgloss.NewStyle().Foreground(clrBlue)
 	sDone   = lipgloss.NewStyle().Foreground(clrGreen)
 	sFailed = lipgloss.NewStyle().Foreground(clrRed)
 	sMuted  = lipgloss.NewStyle().Foreground(clrMuted)
@@ -101,4 +102,8 @@ const (
 	// row = cursor(2) + name(dynamic) + sp(1) + fmt + sp(1) + status + sp(1) + date
 	fixedWidth = 2 + 1 + colFmt + 1 + colStatus + 1 + colDate // = 45
 	detailRows = 5                                             // content lines in the details panel
+
+	// confirmModalMaxItems is the maximum number of playlist entries visible at once
+	// in the confirm modal without scrolling.
+	confirmModalMaxItems = 12
 )

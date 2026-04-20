@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"marco-souza/djc/internal/library"
+	"marco-souza/djc/internal/youtube"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,6 +46,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.mode {
 		case modeAdd:
 			return m.updateAdd(msg)
+		case modeConfirm:
+			return m.updateConfirm(msg)
 		case modeDelete:
 			return m.updateDelete(msg)
 		case modeConfig:
@@ -59,6 +63,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.songs = msg.songs
 			m.clampCursor()
 		}
+
+	case metadataFetchedMsg:
+		// Only act if we're still in the confirm modal (user may have pressed Esc).
+		if m.mode != modeConfirm {
+			break
+		}
+		if msg.err != nil {
+			m.mode = modeAdd
+			m.setError("Could not fetch info: " + msg.err.Error())
+			return m, m.addInput.Focus()
+		}
+		m.confirmItems = msg.items
+		m.confirmSel = make([]bool, len(msg.items))
+		for i := range m.confirmSel {
+			m.confirmSel[i] = true
+		}
+		m.confirmCursor = 0
+		m.confirmOffset = 0
+
+	case downloadsQueuedMsg:
+		// Prepend songs to the list in reverse order so the first track ends up at top.
+		for i := len(msg.songs) - 1; i >= 0; i-- {
+			m.songs = append([]library.Song{msg.songs[i]}, m.songs...)
+		}
+		m.cursor, m.offset = 0, 0
+		for i, song := range msg.songs {
+			m.downloadQueue = append(m.downloadQueue, queuedDownload{Song: song, URL: msg.urls[i]})
+		}
+		// Start the first download immediately if nothing is already downloading.
+		if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
+			next := m.downloadQueue[0]
+			m.downloadQueue = m.downloadQueue[1:]
+			cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+		}
+		n := len(msg.songs)
+		word := "song"
+		if n != 1 {
+			word = "songs"
+		}
+		m.setStatus(fmt.Sprintf("%d %s added to queue", n, word), false)
 
 	case downloadStartedMsg:
 		m.cancels[msg.Song.ID] = msg.cancel
@@ -78,6 +122,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case downloadUpdateMsg:
 		if !msg.ok {
 			cmds = append(cmds, refreshSongsCmd(m.repo))
+			// Start the next queued download if the download pool is now idle.
+			if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
+				next := m.downloadQueue[0]
+				m.downloadQueue = m.downloadQueue[1:]
+				cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+			}
 			break
 		}
 		m.applyDownloadEvent(msg.event)
@@ -305,21 +355,93 @@ func (m Model) updateAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.mode = modeList
 		m.addInput.Blur()
-		return m, nil
+		return m, tea.ClearScreen
 	case "enter":
 		url := strings.TrimSpace(m.addInput.Value())
 		if url == "" {
 			m.setError("URL cannot be empty")
 			return m, nil
 		}
-		m.mode = modeList
 		m.addInput.Blur()
-		return m, startDownloadCmd(m.repo, m.cfg, url)
+		m.mode = modeConfirm
+		m.confirmURL = url
+		m.confirmItems = nil // nil == loading
+		m.confirmSel = nil
+		m.confirmCursor = 0
+		m.confirmOffset = 0
+		return m, fetchMetadataCmd(url)
 	}
 
 	var cmd tea.Cmd
 	m.addInput, cmd = m.addInput.Update(msg)
 	return m, cmd
+}
+
+// updateConfirm handles keys inside the confirmation / playlist-select modal.
+func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.confirmItems)
+
+	switch msg.String() {
+	case "esc":
+		// Go back to the add modal with the URL still in the input.
+		m.mode = modeAdd
+		m.confirmItems = nil
+		m.confirmSel = nil
+		return m, m.addInput.Focus()
+
+	case "j", "down":
+		if n > 0 && m.confirmCursor < n-1 {
+			m.confirmCursor++
+			if m.confirmCursor >= m.confirmOffset+confirmModalMaxItems {
+				m.confirmOffset = m.confirmCursor - confirmModalMaxItems + 1
+			}
+		}
+
+	case "k", "up":
+		if n > 0 && m.confirmCursor > 0 {
+			m.confirmCursor--
+			if m.confirmCursor < m.confirmOffset {
+				m.confirmOffset = m.confirmCursor
+			}
+		}
+
+	case " ":
+		if n > 0 && m.confirmCursor < len(m.confirmSel) {
+			m.confirmSel[m.confirmCursor] = !m.confirmSel[m.confirmCursor]
+		}
+
+	case "a":
+		for i := range m.confirmSel {
+			m.confirmSel[i] = true
+		}
+
+	case "n":
+		for i := range m.confirmSel {
+			m.confirmSel[i] = false
+		}
+
+	case "enter":
+		if n == 0 {
+			// Still loading — ignore.
+			return m, nil
+		}
+		var selected []youtube.VideoInfo
+		for i, item := range m.confirmItems {
+			if i >= len(m.confirmSel) || m.confirmSel[i] {
+				selected = append(selected, item)
+			}
+		}
+		if len(selected) == 0 {
+			m.setError("No songs selected")
+			return m, nil
+		}
+		m.mode = modeList
+		m.confirmItems = nil
+		m.confirmSel = nil
+		return m, tea.Batch(tea.ClearScreen, createQueuedDownloadsCmd(m.repo, m.cfg, selected))
+	}
+
+	return m, nil
 }
 
 // updateDelete handles keys inside the delete confirmation modal.

@@ -106,14 +106,17 @@ ORDER BY created_at DESC, id DESC
 	return songs, nil
 }
 
-func (r *Repository) CreateSong(url, format string) (Song, error) {
+func (r *Repository) CreateSong(url, format, status string) (Song, error) {
+	if status == "" {
+		status = "downloading"
+	}
 	placeholderName := url // temporary; replaced by actual title once download resolves
 	createdAt := time.Now().UTC()
 
 	res, err := r.db.Exec(`
 INSERT INTO songs(name, format, status, progress, file_path, source_url, created_at, updated_at)
-VALUES (?, ?, 'downloading', 0, '', ?, ?, ?)
-`, placeholderName, format, url, createdAt.Format(time.RFC3339Nano), createdAt.Format(time.RFC3339Nano))
+VALUES (?, ?, ?, 0, '', ?, ?, ?)
+`, placeholderName, format, status, url, createdAt.Format(time.RFC3339Nano), createdAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return Song{}, fmt.Errorf("insert song: %w", err)
 	}
@@ -127,7 +130,7 @@ VALUES (?, ?, 'downloading', 0, '', ?, ?, ?)
 		ID:        id,
 		Name:      placeholderName,
 		Format:    format,
-		Status:    "downloading",
+		Status:    status,
 		Progress:  0,
 		FilePath:  "",
 		SourceURL: url,

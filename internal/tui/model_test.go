@@ -25,6 +25,11 @@ func TestFormatSongStatus(t *testing.T) {
 			want: "Downloaded",
 		},
 		{
+			name: "queued status",
+			song: library.Song{Status: "queued"},
+			want: "In Queue",
+		},
+		{
 			name: "arbitrary status passthrough",
 			song: library.Song{Status: "some other status"},
 			want: "some other status",

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"marco-souza/djc/internal/library"
+	"marco-souza/djc/internal/youtube"
 )
 
 // ── mode ────────────────────────────────────────────────────────────────────
@@ -14,6 +15,7 @@ type Mode int
 const (
 	modeList Mode = iota
 	modeAdd
+	modeConfirm // confirmation / playlist-select modal
 	modeDelete
 	modeConfig
 )
@@ -74,3 +76,22 @@ type playerTickMsg struct{}
 
 // mpvDurationMsg carries the total duration of the current track, queried via mpv IPC.
 type mpvDurationMsg struct{ duration float64 }
+
+// metadataFetchedMsg carries the result of a metadata-fetch operation.
+type metadataFetchedMsg struct {
+	items []youtube.VideoInfo
+	url   string
+	err   error
+}
+
+// downloadsQueuedMsg is sent after Song rows have been created for queued downloads.
+type downloadsQueuedMsg struct {
+	songs []library.Song
+	urls  []string
+}
+
+// queuedDownload holds a song that is waiting its turn in the download queue.
+type queuedDownload struct {
+	Song library.Song
+	URL  string
+}
