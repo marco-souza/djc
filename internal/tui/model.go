@@ -139,9 +139,10 @@ type downloadEvent struct {
 }
 
 type downloadStartedMsg struct {
-	Song   library.Song
-	ch     <-chan downloadEvent
-	cancel context.CancelFunc
+	Song       library.Song
+	ch         <-chan downloadEvent
+	cancel     context.CancelFunc
+	reDownload bool // true when refreshing an existing song (don't prepend to list)
 }
 
 type downloadUpdateMsg struct {
@@ -277,8 +278,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadStartedMsg:
 		m.cancels[msg.Song.ID] = msg.cancel
-		m.songs = append([]library.Song{msg.Song}, m.songs...)
-		m.cursor, m.offset = 0, 0
+		if msg.reDownload {
+			// Update the existing row in-place instead of prepending a duplicate.
+			if idx := slices.IndexFunc(m.songs, func(s library.Song) bool { return s.ID == msg.Song.ID }); idx >= 0 {
+				m.songs[idx].Status = "downloading"
+				m.songs[idx].Progress = 0
+			}
+		} else {
+			m.songs = append([]library.Song{msg.Song}, m.songs...)
+			m.cursor, m.offset = 0, 0
+		}
 		m.setStatus("Downloading…", false)
 		cmds = append(cmds, waitForDownloadUpdate(msg.ch))
 
@@ -377,7 +386,15 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "r":
-		return m, refreshSongsCmd(m.repo)
+		if len(m.songs) > 0 {
+			song := m.songs[m.cursor]
+			if _, downloading := m.cancels[song.ID]; downloading {
+				m.setStatus("Download already in progress", false)
+				break
+			}
+			m.setStatus("Refreshing…", false)
+			return m, refreshSelectedSongCmd(m.repo, m.cfg, song)
+		}
 
 	case "esc":
 		m.setStatus("", false)
@@ -796,7 +813,7 @@ func (m Model) renderHelp() string {
 		bind("dd", "delete"),
 		bind("e", "→mp3"),
 		bind("c", "config"),
-		bind("r", "reload"),
+		bind("r", "refresh"),
 		bind("q", "quit"),
 	}
 	return " " + strings.Join(parts, sep)
@@ -1026,6 +1043,89 @@ func deleteSongCmd(repo *library.Repository, song library.Song) tea.Cmd {
 		}
 		return actionDoneMsg{message: "Song deleted"}
 	}
+}
+
+// refreshSelectedSongCmd attempts to reconcile the selected song with the
+// filesystem, in order:
+//  1. File already exists at the recorded path → move to DownloadDir if needed,
+//     update the DB entry and report success.
+//  2. File not at recorded path → search DownloadDir for a matching file.
+//     If found, update the DB entry and report success.
+//  3. Not found anywhere → trigger a re-download from the song's SourceURL.
+func refreshSelectedSongCmd(repo *library.Repository, cfg *config.Config, song library.Song) tea.Cmd {
+	return func() tea.Msg {
+		// 1. File exists at the recorded path.
+		if song.FilePath != "" {
+			if _, err := os.Stat(song.FilePath); err == nil {
+				dest := song.FilePath
+				// Move to DownloadDir if it lives elsewhere.
+				if !strings.HasPrefix(filepath.Clean(song.FilePath)+string(filepath.Separator),
+					filepath.Clean(cfg.DownloadDir)+string(filepath.Separator)) {
+					if err2 := os.MkdirAll(cfg.DownloadDir, 0o755); err2 == nil {
+						target := filepath.Join(cfg.DownloadDir, filepath.Base(song.FilePath))
+						if err2 = os.Rename(song.FilePath, target); err2 == nil {
+							dest = target
+						}
+					}
+				}
+				if err2 := repo.UpdateDownload(song.ID, song.Name, dest, "downloaded", 100); err2 != nil {
+					return actionDoneMsg{err: fmt.Errorf("refresh: %w", err2)}
+				}
+				return actionDoneMsg{message: "Song is up-to-date"}
+			}
+		}
+
+		// 2. Search DownloadDir for a matching file.
+		if found := findSongFile(song, cfg.DownloadDir); found != "" {
+			if err := repo.UpdateDownload(song.ID, song.Name, found, "downloaded", 100); err != nil {
+				return actionDoneMsg{err: fmt.Errorf("refresh: %w", err)}
+			}
+			return actionDoneMsg{message: "Song located and refreshed"}
+		}
+
+		// 3. Re-download from source.
+		if song.SourceURL == "" {
+			return actionDoneMsg{err: fmt.Errorf("refresh: file not found and no source URL to re-download from")}
+		}
+		ch := make(chan downloadEvent)
+		ctx, cancel := context.WithCancel(context.Background())
+		go downloadSong(ctx, repo, cfg, song, song.SourceURL, ch)
+		return downloadStartedMsg{Song: song, ch: ch, cancel: cancel, reDownload: true}
+	}
+}
+
+// findSongFile walks dir and returns the first file whose base name (with or
+// without extension) matches the recorded FilePath's base name or the song Name.
+func findSongFile(song library.Song, dir string) string {
+	var targets []string
+	if song.FilePath != "" {
+		base := strings.ToLower(filepath.Base(song.FilePath))
+		targets = append(targets, base)
+		targets = append(targets, strings.ToLower(strings.TrimSuffix(base, filepath.Ext(base))))
+	}
+	if song.Name != "" {
+		targets = append(targets, strings.ToLower(song.Name))
+	}
+	if len(targets) == 0 {
+		return ""
+	}
+
+	var found string
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || found != "" {
+			return nil
+		}
+		base := strings.ToLower(filepath.Base(path))
+		stem := strings.ToLower(strings.TrimSuffix(base, filepath.Ext(base)))
+		for _, t := range targets {
+			if base == t || stem == t {
+				found = path
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return found
 }
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
