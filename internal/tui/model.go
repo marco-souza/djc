@@ -798,7 +798,8 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 				status = "downloaded"
 			}
 
-			if repoErr := repo.UpdateDownload(song.ID, pick(progress.Name, song.Name), latestFilePath, status, progress.Percent); repoErr != nil && !updateErrReported {
+			repoErr := repo.UpdateDownload(song.ID, pick(progress.Name, song.Name), latestFilePath, status, progress.Percent)
+			if repoErr != nil && !updateErrReported {
 				updateErrReported = true
 				ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("update song progress: %w", repoErr)}
 			}
@@ -939,12 +940,3 @@ func extensionOr(defaultValue, filePath string) string {
 	}
 	return defaultValue
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// ── tests helpers (exported so model_test.go can use them) ──────────────────

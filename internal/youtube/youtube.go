@@ -90,5 +90,7 @@ func DownloadAudioWithProgress(
 }
 
 func init() {
-	yt.MustInstall(context.Background(), &yt.InstallOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	yt.MustInstall(ctx, &yt.InstallOptions{})
 }
