@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema: "internal/library/sql/schema.sql"
+    queries: "internal/library/sql/queries.sql"
+    gen:
+      go:
+        package: librarydb
+        out: internal/library/sqlc
+        sql_package: database/sql
