@@ -58,8 +58,15 @@ type playbackStartedMsg struct {
 	songID int64
 	name   string
 	proc   *exec.Cmd
+	ipc    string // mpv IPC socket path, empty for other players
 }
 
 type playbackEndedMsg struct {
 	songID int64
 }
+
+// playerTickMsg is sent every second while a track is playing to update the elapsed time.
+type playerTickMsg struct{}
+
+// mpvDurationMsg carries the total duration of the current track, queried via mpv IPC.
+type mpvDurationMsg struct{ duration float64 }

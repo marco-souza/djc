@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"marco-souza/djc/internal/library"
 
@@ -33,9 +34,10 @@ func (m Model) View() string {
 // Layout (each line):
 //
 //	1        title bar
-//	2        ─── separator
-//	3        table column headers
-//	4..4+lh  song rows  (lh = listHeight())
+//	2        player bar (always visible; shows "Nothing playing" when idle)
+//	3        ─── separator
+//	4        table column headers
+//	5..5+lh  song rows  (lh = listHeight())
 //	+1       ─── separator
 //	+5       detail panel  (detailRows content lines)
 //	+1       ─── separator
@@ -49,23 +51,27 @@ func (m Model) viewMain() string {
 	// 1. Title
 	title := sTitle.Render("🎧  DJ Companion")
 
-	// 2. Table header
+	// 2. Player bar
+	playerBar := m.renderPlayerBar(w)
+
+	// 3. Table header
 	header := m.renderHeader(w)
 
-	// 3. Song list rows (exactly listHeight lines)
+	// 4. Song list rows (exactly listHeight lines)
 	list := m.renderList(w)
 
-	// 4. Detail panel
+	// 5. Detail panel
 	details := m.renderDetails(w)
 
-	// 5. Status
+	// 6. Status
 	status := m.renderStatus(w)
 
-	// 6. Help bar
+	// 7. Help bar
 	help := m.renderHelp()
 
 	parts := []string{
 		title,
+		playerBar,
 		sep,
 		header,
 		list,
@@ -159,6 +165,78 @@ func (m Model) viewConfig() string {
 }
 
 // ── rendering helpers ───────────────────────────────────────────────────────
+
+// renderPlayerBar renders the persistent 1-line music player bar.
+// When nothing is playing it shows a hint; when a track is active it shows
+// the song name, play/pause state, seek controls, a progress bar, elapsed/total
+// time, and volume level.
+func (m Model) renderPlayerBar(w int) string {
+	if m.playerSongID == 0 {
+		hint := "  ♫  Nothing playing  ·  spc: play  ·  [/]: seek ±10s  ·  -/=: vol"
+		return sMuted.Width(w).Render(hint)
+	}
+
+	playIcon := "▶"
+	if m.playerPaused {
+		playIcon = "⏸"
+	}
+
+	// Time string
+	elapsed := formatDuration(m.playerElapsed)
+	timeStr := elapsed
+	if m.playerDuration > 0 {
+		timeStr = elapsed + "/" + formatDuration(m.playerDuration)
+	}
+
+	// Right section: controls + time + volume (compute width first so the name
+	// section can fill exactly the remaining space).
+	rightStr := fmt.Sprintf("  -10 %s +10  %s  vol:%d  ", playIcon, timeStr, m.playerVolume)
+	rightW := lipgloss.Width(rightStr)
+
+	// Progress bar (scales with terminal width, minimum 6 chars).
+	var pct float64
+	if m.playerDuration > 0 {
+		pct = float64(m.playerElapsed) / float64(m.playerDuration)
+		if pct > 1 {
+			pct = 1
+		}
+	}
+	pbW := max(6, w/6)
+	pb := m.playerProgress // copy — don't mutate the model field
+	pb.Width = pbW
+	bar := pb.ViewAs(pct)
+	barW := lipgloss.Width(bar)
+
+	// Song name fills the remaining width.
+	// prefixW accounts for the two leading spaces + state icon + trailing space: "  ▶ "
+	const prefixW = 4
+	nameW := w - rightW - barW - prefixW
+	if nameW < 2 {
+		nameW = 2
+	}
+	var songName string
+	for _, s := range m.songs {
+		if s.ID == m.playerSongID {
+			songName = s.Name
+			break
+		}
+	}
+	nameSection := sPlayer.Render(fmt.Sprintf("  %s %s", playIcon, truncate(songName, nameW)))
+	// Pad to align the progress bar flush with the right section.
+	if pad := prefixW + nameW - lipgloss.Width(nameSection); pad > 0 {
+		nameSection += strings.Repeat(" ", pad)
+	}
+
+	return nameSection + bar + sMuted.Render(rightStr)
+}
+
+// formatDuration formats a duration as m:ss (e.g. "3:05").
+func formatDuration(d time.Duration) string {
+	d = d.Truncate(time.Second)
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	return fmt.Sprintf("%d:%02d", m, s)
+}
 
 func (m Model) nameWidth() int {
 	n := m.width - fixedWidth

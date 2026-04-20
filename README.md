@@ -49,13 +49,32 @@ bottom panel shows the details of the currently selected song.
 | `dd` | Open **Delete** confirmation modal (vim-style double key) |
 | `e` | Export selected song to MP3 (requires `ffmpeg`) |
 | `r` | Refresh/reconcile the selected song (locate/move the file or re-download it if needed) |
-| `Space` | Play / pause the selected song (requires `ffplay`, `mpv`, `afplay`, or `aplay`) |
+| `Space` / `F8` | Play / pause the selected song — F8 acts as a media key in most terminals |
+| `[` / `F7` | Seek back 10 s (requires `mpv`) |
+| `]` / `F9` | Seek forward 10 s (requires `mpv`) |
+| `-` | Volume down 10 % (requires `mpv`) |
+| `=` | Volume up 10 % (requires `mpv`) |
 | `q` / `Ctrl+C` | Quit |
 
 Inside the **Add Song** modal: `Enter` starts the download, `Esc` cancels.
 
 Inside the **Delete** modal: `h`/`l` or `Tab` toggles the button, `Enter` confirms,
 `y` deletes immediately, `n` or `Esc` cancels.
+
+### Player bar
+
+A persistent **player bar** sits just below the title and is always visible.  When a
+track is playing it shows the song name, play/pause state, a live progress bar,
+elapsed/total time (`m:ss / m:ss`), and the current volume level.
+
+Seek and volume controls require **`mpv`** (preferred player when available).  If only
+`ffplay`, `afplay`, or `aplay` is installed, play/pause still works but seek and volume
+keys are no-ops.
+
+**Media key integration** — `F7` / `F8` / `F9` are bound to seek-back / play-pause /
+seek-forward.  Whether your physical media keys send these codes depends on your
+terminal and OS key mapping (e.g. `xdotool key F8` on X11, or a terminal binding
+like Kitty's `map XF86AudioPlay send_key F8`).
 
 ## Contact
 

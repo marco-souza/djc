@@ -2,11 +2,14 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"marco-souza/djc/internal/config"
 	"marco-souza/djc/internal/library"
@@ -260,7 +263,7 @@ func findSongFile(song library.Song, dir string) string {
 // with the TUI's raw terminal (which would cause it to exit immediately).
 func playSongCmd(song library.Song) tea.Cmd {
 	return func() tea.Msg {
-		player, args := findPlayer()
+		player, args, ipc := findPlayer()
 		if player == "" {
 			return actionDoneMsg{err: fmt.Errorf("no supported audio player found (install ffplay, mpv, afplay, or aplay)")}
 		}
@@ -298,7 +301,7 @@ func playSongCmd(song library.Song) tea.Cmd {
 		if f, ok := cmd.Stdout.(*os.File); ok {
 			_ = f.Close()
 		}
-		return playbackStartedMsg{songID: song.ID, name: song.Name, proc: cmd}
+		return playbackStartedMsg{songID: song.ID, name: song.Name, proc: cmd, ipc: ipc}
 	}
 }
 
@@ -310,19 +313,135 @@ func waitForPlaybackEndCmd(songID int64, proc *exec.Cmd) tea.Cmd {
 	}
 }
 
-// findPlayer returns the first available audio player binary and its arguments.
-func findPlayer() (string, []string) {
-	if p, err := exec.LookPath("ffplay"); err == nil {
-		return p, []string{"-nodisp", "-autoexit", "-loglevel", "quiet"}
+// playerTickCmd fires a tick every second to update the elapsed-time display.
+func playerTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return playerTickMsg{}
+	})
+}
+
+// getMpvDurationCmd queries the total duration of the current track from mpv via IPC.
+// It retries for up to ~2 s to allow mpv time to open the file and set up the socket.
+const (
+	mpvDurationRetries  = 5
+	mpvDurationInterval = 400 * time.Millisecond
+)
+
+func getMpvDurationCmd(ipc string) tea.Cmd {
+	return func() tea.Msg {
+		for range mpvDurationRetries {
+			time.Sleep(mpvDurationInterval)
+			dur, err := mpvGetFloat(ipc, "duration")
+			if err == nil && dur > 0 {
+				return mpvDurationMsg{duration: dur}
+			}
+		}
+		return mpvDurationMsg{} // duration unknown
 	}
+}
+
+// mpvSeekCmd sends a relative seek command to mpv (delta in seconds).
+func mpvSeekCmd(ipc string, delta float64) tea.Cmd {
+	return func() tea.Msg {
+		if err := mpvSendCmd(ipc, []interface{}{"seek", delta, "relative"}); err != nil {
+			return actionDoneMsg{err: fmt.Errorf("seek: %w", err)}
+		}
+		return nil
+	}
+}
+
+// mpvVolumeCmd sets the playback volume (0–100) on mpv.
+func mpvVolumeCmd(ipc string, vol int) tea.Cmd {
+	return func() tea.Msg {
+		_ = mpvSendCmd(ipc, []interface{}{"set_property", "volume", vol})
+		return nil
+	}
+}
+
+// findPlayer returns the first available audio player binary, its arguments, and an
+// optional mpv IPC socket path.  mpv is tried first because its JSON IPC socket
+// enables seek, volume control, and duration queries.
+func findPlayer() (player string, args []string, ipc string) {
 	if p, err := exec.LookPath("mpv"); err == nil {
-		return p, []string{"--no-video", "--really-quiet"}
+		socket := fmt.Sprintf("/tmp/djc-mpv-%d.sock", os.Getpid())
+		return p, []string{
+			"--no-video",
+			"--really-quiet",
+			"--input-ipc-server=" + socket,
+		}, socket
+	}
+	if p, err := exec.LookPath("ffplay"); err == nil {
+		return p, []string{"-nodisp", "-autoexit", "-loglevel", "quiet"}, ""
 	}
 	if p, err := exec.LookPath("afplay"); err == nil { // macOS
-		return p, nil
+		return p, nil, ""
 	}
 	if p, err := exec.LookPath("aplay"); err == nil { // Linux ALSA
-		return p, nil
+		return p, nil, ""
 	}
-	return "", nil
+	return "", nil, ""
+}
+
+// ── mpv IPC helpers ──────────────────────────────────────────────────────────
+
+// mpvSendCmd writes a JSON command to the mpv IPC socket (fire-and-forget).
+func mpvSendCmd(socket string, command []interface{}) error {
+	msg, err := json.Marshal(map[string]interface{}{"command": command})
+	if err != nil {
+		return err
+	}
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_, err = conn.Write(append(msg, '\n'))
+	return err
+}
+
+// mpvGetFloat queries a numeric property from the mpv IPC socket.
+func mpvGetFloat(socket, property string) (float64, error) {
+	type request struct {
+		Command   []interface{} `json:"command"`
+		RequestID int           `json:"request_id"`
+	}
+	type response struct {
+		Data      float64 `json:"data"`
+		Error     string  `json:"error"`
+		RequestID int     `json:"request_id"`
+	}
+
+	req, err := json.Marshal(request{
+		Command:   []interface{}{"get_property", property},
+		RequestID: 1,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+	if _, err = conn.Write(append(req, '\n')); err != nil {
+		return 0, err
+	}
+
+	dec := json.NewDecoder(conn)
+	for {
+		var resp response
+		if err = dec.Decode(&resp); err != nil {
+			return 0, err
+		}
+		if resp.RequestID == 1 {
+			if resp.Error != "success" {
+				return 0, fmt.Errorf("mpv: %s", resp.Error)
+			}
+			return resp.Data, nil
+		}
+	}
 }

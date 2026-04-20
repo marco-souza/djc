@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"marco-souza/djc/internal/library"
 
@@ -96,15 +98,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playerProc = msg.proc
 		m.playerSongID = msg.songID
 		m.playerPaused = false
+		m.playerIPC = msg.ipc
+		m.playerElapsed = 0
+		m.playerDuration = 0
 		m.setStatus("▶ "+msg.name, false)
-		cmds = append(cmds, waitForPlaybackEndCmd(msg.songID, msg.proc))
+		cmds = append(cmds, waitForPlaybackEndCmd(msg.songID, msg.proc), playerTickCmd())
+		if msg.ipc != "" {
+			cmds = append(cmds, getMpvDurationCmd(msg.ipc))
+		}
 
 	case playbackEndedMsg:
 		if m.playerSongID == msg.songID {
+			if m.playerIPC != "" {
+				_ = os.Remove(m.playerIPC)
+			}
 			m.playerProc = nil
 			m.playerSongID = 0
 			m.playerPaused = false
+			m.playerIPC = ""
+			m.playerElapsed = 0
+			m.playerDuration = 0
 			m.setStatus("", false)
+		}
+
+	case playerTickMsg:
+		if m.playerSongID != 0 {
+			if !m.playerPaused {
+				m.playerElapsed += time.Second
+				if m.playerDuration > 0 && m.playerElapsed > m.playerDuration {
+					m.playerElapsed = m.playerDuration
+				}
+			}
+			cmds = append(cmds, playerTickCmd())
+		}
+
+	case mpvDurationMsg:
+		if msg.duration > 0 {
+			m.playerDuration = time.Duration(msg.duration * float64(time.Second))
 		}
 	}
 
@@ -193,7 +223,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, refreshSelectedSongCmd(m.repo, m.cfg, song)
 		}
 
-	case " ":
+	case " ", "f8":
 		if len(m.songs) == 0 {
 			break
 		}
@@ -218,6 +248,49 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Different or no song: stop current and start the new one.
 		m.stopPlayer()
 		return m, playSongCmd(song)
+
+	case "[", "f7":
+		if m.playerSongID != 0 {
+			if m.playerIPC != "" {
+				return m, mpvSeekCmd(m.playerIPC, -10)
+			}
+			if m.playerElapsed > 10*time.Second {
+				m.playerElapsed -= 10 * time.Second
+			} else {
+				m.playerElapsed = 0
+			}
+		}
+
+	case "]", "f9":
+		if m.playerSongID != 0 {
+			if m.playerIPC != "" {
+				return m, mpvSeekCmd(m.playerIPC, 10)
+			}
+			m.playerElapsed += 10 * time.Second
+			if m.playerDuration > 0 && m.playerElapsed > m.playerDuration {
+				m.playerElapsed = m.playerDuration
+			}
+		}
+
+	case "-":
+		if m.playerSongID != 0 {
+			if m.playerVolume > 0 {
+				m.playerVolume -= 10
+			}
+			if m.playerIPC != "" {
+				return m, mpvVolumeCmd(m.playerIPC, m.playerVolume)
+			}
+		}
+
+	case "=":
+		if m.playerSongID != 0 {
+			if m.playerVolume < 100 {
+				m.playerVolume += 10
+			}
+			if m.playerIPC != "" {
+				return m, mpvVolumeCmd(m.playerIPC, m.playerVolume)
+			}
+		}
 
 	case "esc":
 		m.setStatus("", false)
@@ -335,11 +408,15 @@ func (m Model) updateConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // listHeight returns the number of visible song rows.
 //
-//	total = title(1) + sep(1) + header(1) + list(lh) + sep(1) + details(detailRows) + sep(1) + status(1) + help(1)
-//	      = 7 + detailRows + lh
-//	=> lh = height - 7 - detailRows
+//	total = title(1) + playerBar(1) + sep(1) + header(1) + list(lh) + sep(1) + details(detailRows) + sep(1) + status(1) + help(1)
+//	      = 8 + detailRows + lh
+//	=> lh = height - 8 - detailRows
+//
+// fixedRows = title + playerBar + 3×sep + header + status + help = 8
+const fixedRows = 8
+
 func (m Model) listHeight() int {
-	lh := m.height - 7 - detailRows
+	lh := m.height - fixedRows - detailRows
 	if lh < 1 {
 		return 1
 	}
@@ -419,7 +496,13 @@ func (m *Model) stopPlayer() {
 		}
 		_ = m.playerProc.Process.Kill()
 	}
+	if m.playerIPC != "" {
+		_ = os.Remove(m.playerIPC)
+		m.playerIPC = ""
+	}
 	m.playerProc = nil
 	m.playerSongID = 0
 	m.playerPaused = false
+	m.playerElapsed = 0
+	m.playerDuration = 0
 }

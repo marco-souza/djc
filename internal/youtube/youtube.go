@@ -16,6 +16,10 @@ import (
 
 var installOnce sync.Once
 
+// ytdlpInstallTimeout is the maximum time allowed for the yt-dlp binary installation.
+// 5 minutes is generous to accommodate slow networks and CI environments.
+const ytdlpInstallTimeout = 5 * time.Minute
+
 type DownloadProgress struct {
 	Name      string
 	Format    string
@@ -40,7 +44,7 @@ func DownloadAudioWithProgress(
 	// Install yt-dlp on first use rather than at package init time so that
 	// tests and unrelated commands are not forced to block on network I/O.
 	installOnce.Do(func() {
-		installCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		installCtx, cancel := context.WithTimeout(context.Background(), ytdlpInstallTimeout)
 		defer cancel()
 		yt.MustInstall(installCtx, &yt.InstallOptions{})
 	})

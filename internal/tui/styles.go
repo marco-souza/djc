@@ -64,6 +64,9 @@ var (
 
 	sBtnActive = lipgloss.NewStyle().Bold(true).Padding(0, 2)
 	sBtnNormal = lipgloss.NewStyle().Foreground(clrMuted).Padding(0, 2)
+
+	// Player bar — active track name / state icon
+	sPlayer = lipgloss.NewStyle().Bold(true).Foreground(clrAccent)
 )
 
 // ── config field metadata ────────────────────────────────────────────────────

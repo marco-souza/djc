@@ -3,6 +3,7 @@ package tui
 import (
 "context"
 "os/exec"
+"time"
 
 "marco-souza/djc/internal/config"
 "marco-souza/djc/internal/library"
@@ -39,9 +40,13 @@ deleteConf bool
 cancels map[int64]context.CancelFunc
 
 // playback
-playerProc   *exec.Cmd
-playerSongID int64 // 0 = nothing playing
-playerPaused bool
+playerProc    *exec.Cmd
+playerSongID  int64 // 0 = nothing playing
+playerPaused  bool
+playerElapsed time.Duration // approximate elapsed time (updated by ticker)
+playerDuration time.Duration // 0 = unknown (queried via mpv IPC)
+playerVolume  int    // 0-100, default 100
+playerIPC     string // mpv IPC socket path, empty for non-mpv players
 
 // config modal
 configInputs [4]textinput.Model
@@ -51,6 +56,7 @@ configFocus  int
 spinner          spinner.Model
 helpModel        help.Model
 downloadProgress progress.Model
+playerProgress   progress.Model // progress bar for the player bar
 
 // terminal dimensions
 width, height int
@@ -88,6 +94,12 @@ progress.WithoutPercentage(),
 progress.WithGradient(string(clrYellow), string(clrGreen)),
 )
 
+playerPb := progress.New(
+progress.WithWidth(16),
+progress.WithoutPercentage(),
+progress.WithGradient(string(clrBlue), string(clrAccent)),
+)
+
 return Model{
 repo:             repo,
 cfg:              cfg,
@@ -95,6 +107,8 @@ addInput:         inp,
 spinner:          sp,
 helpModel:        h,
 downloadProgress: pb,
+playerProgress:   playerPb,
+playerVolume:     100,
 cancels:          map[int64]context.CancelFunc{},
 configInputs:     newConfigInputs(),
 }

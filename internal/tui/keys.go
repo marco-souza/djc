@@ -7,15 +7,19 @@ import (
 // keyMap defines all key bindings and implements help.KeyMap so the bubbles
 // help component can render them automatically.
 type keyMap struct {
-Move    key.Binding
-Ends    key.Binding
-Add     key.Binding
-Delete  key.Binding
-Export  key.Binding
-Config  key.Binding
-Refresh key.Binding
-Play    key.Binding
-Quit    key.Binding
+Move        key.Binding
+Ends        key.Binding
+Add         key.Binding
+Delete      key.Binding
+Export      key.Binding
+Config      key.Binding
+Refresh     key.Binding
+Play        key.Binding
+SeekBack    key.Binding
+SeekForward key.Binding
+VolumeDown  key.Binding
+VolumeUp    key.Binding
+Quit        key.Binding
 }
 
 // defaultKeys is the singleton key map used throughout the TUI.
@@ -49,8 +53,24 @@ key.WithKeys("r"),
 key.WithHelp("r", "refresh"),
 ),
 Play: key.NewBinding(
-key.WithKeys(" "),
-key.WithHelp("spc", "play/pause"),
+key.WithKeys(" ", "f8"),
+key.WithHelp("spc/F8", "play/pause"),
+),
+SeekBack: key.NewBinding(
+key.WithKeys("[", "f7"),
+key.WithHelp("[", "-10s"),
+),
+SeekForward: key.NewBinding(
+key.WithKeys("]", "f9"),
+key.WithHelp("]", "+10s"),
+),
+VolumeDown: key.NewBinding(
+key.WithKeys("-"),
+key.WithHelp("-", "vol-"),
+),
+VolumeUp: key.NewBinding(
+key.WithKeys("="),
+key.WithHelp("=", "vol+"),
 ),
 Quit: key.NewBinding(
 key.WithKeys("q", "ctrl+c"),
@@ -60,7 +80,7 @@ key.WithHelp("q", "quit"),
 
 // ShortHelp returns the compact one-line help bar bindings.
 func (k keyMap) ShortHelp() []key.Binding {
-return []key.Binding{k.Move, k.Ends, k.Add, k.Delete, k.Export, k.Config, k.Refresh, k.Play, k.Quit}
+return []key.Binding{k.Move, k.Ends, k.Add, k.Delete, k.Export, k.Config, k.Refresh, k.Play, k.SeekBack, k.SeekForward, k.VolumeDown, k.VolumeUp, k.Quit}
 }
 
 // FullHelp returns the expanded multi-row help view bindings.
