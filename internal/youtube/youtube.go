@@ -59,9 +59,12 @@ func DownloadAudioWithProgress(
 
 	if onProgress != nil {
 		dl.ProgressFunc(time.Second, func(update yt.ProgressUpdate) {
+			// Use the format from the output filename when available; fall back to the
+			// requested extension derived from the configured audio format.
+			fileExt := strings.TrimPrefix(strings.ToLower(filepath.Ext(update.Filename)), ".")
 			format := strings.ToLower(ext)
-			if parsedExt := strings.TrimPrefix(strings.ToLower(filepath.Ext(update.Filename)), "."); parsedExt != "" {
-				format = parsedExt
+			if fileExt != "" {
+				format = fileExt
 			}
 
 			progress := DownloadProgress{

@@ -205,6 +205,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
+		// 14 = modal border (2) + padding (2*3=6) + prompt label + margins
 		m.addInput.Width = max(20, m.width-14)
 
 	case spinner.TickMsg:
@@ -802,6 +803,7 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 			if repoErr != nil && !updateErrReported {
 				updateErrReported = true
 				ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("update song progress: %w", repoErr)}
+				return // skip the progress event this iteration; the UI error message is sufficient
 			}
 			ch <- downloadEvent{
 				SongID:    song.ID,
