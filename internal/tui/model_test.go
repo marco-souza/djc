@@ -17,12 +17,12 @@ func TestFormatSongStatus(t *testing.T) {
 		{
 			name: "downloading includes percentage",
 			song: library.Song{Status: "downloading", Progress: 42},
-			want: "downloading (42%)",
+			want: "Downloading… 42%",
 		},
 		{
-			name: "downloaded status remains unchanged",
+			name: "downloaded status",
 			song: library.Song{Status: "downloaded", Progress: 100},
-			want: "downloaded",
+			want: "Downloaded",
 		},
 	}
 

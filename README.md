@@ -34,11 +34,27 @@ Run the terminal UI with:
 djc tui
 ```
 
-Shortcuts:
+The TUI uses a **full-page split layout**: the top panel lists all downloaded songs and the
+bottom panel shows the details of the currently selected song.
 
-- `Ctrl+A` / `A`: add a new YouTube URL download
-- `Enter` on a selected song: open the actions menu (Info, Export as MP3, Delete)
-- `q`: quit
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move cursor down |
+| `k` / `↑` | Move cursor up |
+| `g` | Jump to top |
+| `G` | Jump to bottom |
+| `a` | Open **Add Song** modal (paste a YouTube URL) |
+| `dd` | Open **Delete** confirmation modal (vim-style double key) |
+| `e` | Export selected song to MP3 (requires `ffmpeg`) |
+| `r` | Reload song list from database |
+| `q` / `Ctrl+C` | Quit |
+
+Inside the **Add Song** modal: `Enter` starts the download, `Esc` cancels.
+
+Inside the **Delete** modal: `h`/`l` or `Tab` toggles the button, `Enter` confirms,
+`y` deletes immediately, `n` or `Esc` cancels.
 
 ## Contact
 
