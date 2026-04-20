@@ -28,6 +28,13 @@ var (
 	successStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 )
 
+const (
+	colNameWidth   = 36
+	colFormatWidth = 8
+	colStatusWidth = 20
+	colDateWidth   = 16
+)
+
 type Mode int
 
 const (
@@ -49,8 +56,9 @@ type downloadEvent struct {
 }
 
 type downloadStartedMsg struct {
-	Song library.Song
-	ch   <-chan downloadEvent
+	Song   library.Song
+	ch     <-chan downloadEvent
+	cancel context.CancelFunc
 }
 
 type downloadUpdateMsg struct {
@@ -81,6 +89,7 @@ type Model struct {
 	statusError   bool
 
 	addInput textinput.Model
+	cancels  map[int64]context.CancelFunc
 }
 
 func NewModel(repo *library.Repository, cfg *config.Config) Model {
@@ -99,6 +108,7 @@ func NewModel(repo *library.Repository, cfg *config.Config) Model {
 		statusError:   false,
 		songs:         nil,
 		selected:      0,
+		cancels:       map[int64]context.CancelFunc{},
 	}
 }
 
@@ -109,6 +119,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			m.cancelAllDownloads()
+			return m, tea.Quit
+		}
 		switch m.mode {
 		case modeAdd:
 			return m.updateAdd(msg)
@@ -131,6 +145,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampSelected()
 		return m, nil
 	case downloadStartedMsg:
+		m.cancels[msg.Song.ID] = msg.cancel
 		m.songs = append([]library.Song{msg.Song}, m.songs...)
 		m.selected = 0
 		m.setStatus("Started download", false)
@@ -140,6 +155,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, refreshSongsCmd(m.repo)
 		}
 		m.applyDownloadEvent(msg.event)
+		if msg.event.Completed || msg.event.Err != nil {
+			delete(m.cancels, msg.event.SongID)
+		}
 		return m, waitForDownloadUpdate(msg.ch)
 	case actionDoneMsg:
 		if msg.err != nil {
@@ -156,6 +174,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		m.cancelAllDownloads()
 		return m, tea.Quit
 	case "down", "j":
 		if m.selected < len(m.songs)-1 {
@@ -244,7 +263,7 @@ func (m Model) View() string {
 
 	b.WriteString(titleStyle.Render("🎧 DJ Companion"))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Ctrl+A (or Cmd+A): add song • Enter: actions • q: quit"))
+	b.WriteString(mutedStyle.Render("Ctrl+A (or A): add song • Enter: actions • q: quit"))
 	b.WriteString("\n\n")
 
 	if m.mode == modeAdd {
@@ -259,11 +278,11 @@ func (m Model) View() string {
 	if len(m.songs) == 0 {
 		b.WriteString("No songs downloaded yet. Press Ctrl+A to add one.\n")
 	} else {
-		b.WriteString(headerStyle.Render(fmt.Sprintf("%-36s %-8s %-20s %-16s", "NAME", "FORMAT", "STATUS", "DATE")))
+		b.WriteString(headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s %-*s", colNameWidth, "NAME", colFormatWidth, "FORMAT", colStatusWidth, "STATUS", colDateWidth, "DATE")))
 		b.WriteString("\n")
 		for i, song := range m.songs {
-			name := truncate(song.Name, 36)
-			line := fmt.Sprintf("%-36s %-8s %-20s %-16s", name, strings.ToLower(song.Format), formatSongStatus(song), song.CreatedAt.Local().Format("2006-01-02 15:04"))
+			name := truncate(song.Name, colNameWidth)
+			line := fmt.Sprintf("%-*s %-*s %-*s %-*s", colNameWidth, name, colFormatWidth, strings.ToLower(song.Format), colStatusWidth, formatSongStatus(song), colDateWidth, song.CreatedAt.Local().Format("2006-01-02 15:04"))
 			if i == m.selected && m.mode == modeList {
 				line = selectedRowStyle.Render(line)
 			}
@@ -382,9 +401,10 @@ func startDownloadCmd(repo *library.Repository, cfg *config.Config, url string) 
 		}
 
 		ch := make(chan downloadEvent)
-		go downloadSong(repo, cfg, song, url, ch)
+		ctx, cancel := context.WithCancel(context.Background())
+		go downloadSong(ctx, repo, cfg, song, url, ch)
 
-		return downloadStartedMsg{Song: song, ch: ch}
+		return downloadStartedMsg{Song: song, ch: ch, cancel: cancel}
 	}
 }
 
@@ -395,13 +415,13 @@ func waitForDownloadUpdate(ch <-chan downloadEvent) tea.Cmd {
 	}
 }
 
-func downloadSong(repo *library.Repository, cfg *config.Config, song library.Song, url string, ch chan<- downloadEvent) {
+func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Config, song library.Song, url string, ch chan<- downloadEvent) {
 	defer close(ch)
 
 	var latestFilePath string
 	var latestName string
 
-	_, err := youtube.DownloadAudioWithProgress(context.Background(), url, cfg.AudioFormat, nil, cfg, func(progress youtube.DownloadProgress) {
+	_, err := youtube.DownloadAudioWithProgress(ctx, url, cfg.AudioFormat, nil, cfg, func(progress youtube.DownloadProgress) {
 		if progress.FilePath != "" {
 			latestFilePath = progress.FilePath
 		}
@@ -526,4 +546,13 @@ func extensionOr(defaultValue, filePath string) string {
 		return ext
 	}
 	return defaultValue
+}
+
+func (m *Model) cancelAllDownloads() {
+	for id, cancel := range m.cancels {
+		if cancel != nil {
+			cancel()
+		}
+		delete(m.cancels, id)
+	}
 }

@@ -58,7 +58,7 @@ func DownloadAudioWithProgress(
 	}
 
 	if onProgress != nil {
-		dl.ProgressFunc(500*time.Millisecond, func(update yt.ProgressUpdate) {
+		dl.ProgressFunc(time.Second, func(update yt.ProgressUpdate) {
 			progress := DownloadProgress{
 				Percent:   int(update.Percent()),
 				Completed: update.Status.IsCompletedType(),

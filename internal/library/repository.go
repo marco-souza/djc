@@ -216,6 +216,8 @@ func scanSong(scanner songScanner) (Song, error) {
 		song.CreatedAt = ts
 	} else if ts, err := time.Parse("2006-01-02 15:04:05", createdAtRaw); err == nil {
 		song.CreatedAt = ts
+	} else {
+		song.CreatedAt = time.Now().UTC()
 	}
 
 	return song, nil
