@@ -43,6 +43,7 @@ confirmOffset int
 
 // download queue (processed one at a time)
 downloadQueue []queuedDownload
+startupDone   bool // true after the first refreshMsg has been processed
 
 // delete confirmation: true = "Delete" button selected, false = "Cancel"
 deleteConf bool

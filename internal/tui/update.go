@@ -62,6 +62,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.songs = msg.songs
 			m.clampCursor()
+			if !m.startupDone {
+				m.startupDone = true
+				cmds = append(cmds, m.resumeQueuedDownloads()...)
+			}
 		}
 
 	case metadataFetchedMsg:
@@ -615,6 +619,47 @@ func (m *Model) cancelAllDownloads() {
 	}
 	m.stopPlayer()
 }
+
+// resumeQueuedDownloads is called once at startup.  It enqueues any songs that
+// were left in "queued" status (or were mid-download when the app was last
+// closed) so they are resumed in insertion order (oldest first).
+func (m *Model) resumeQueuedDownloads() []tea.Cmd {
+// m.songs is ordered newest-first; iterate in reverse to get oldest-first.
+var toResume []library.Song
+for i := len(m.songs) - 1; i >= 0; i-- {
+s := m.songs[i]
+if s.Status == "queued" || s.Status == "downloading" {
+toResume = append(toResume, s)
+}
+}
+if len(toResume) == 0 {
+return nil
+}
+
+// Reset any interrupted "downloading" entries to "queued" in-memory so
+// the list shows the correct state before the download restarts.
+for i := range m.songs {
+if m.songs[i].Status == "downloading" {
+m.songs[i].Status = "queued"
+m.songs[i].Progress = 0
+}
+}
+
+for _, song := range toResume {
+song.Status = "queued"
+m.downloadQueue = append(m.downloadQueue, queuedDownload{Song: song, URL: song.SourceURL})
+}
+
+var cmds []tea.Cmd
+// Kick off the first download if nothing is already in-flight.
+if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
+next := m.downloadQueue[0]
+m.downloadQueue = m.downloadQueue[1:]
+cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+}
+return cmds
+}
+
 
 func (m *Model) stopPlayer() {
 	if m.playerProc != nil && m.playerProc.Process != nil {
