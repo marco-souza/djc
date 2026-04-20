@@ -71,19 +71,47 @@ var (
 			BorderForeground(clrRed).
 			Padding(1, 3)
 
+	sCfgModal = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(clrBlue).
+			Padding(1, 3)
+
 	sBtnActive = lipgloss.NewStyle().Bold(true).Padding(0, 2)
 	sBtnNormal = lipgloss.NewStyle().Foreground(clrMuted).Padding(0, 2)
 )
 
+// ── config field metadata ────────────────────────────────────────────────────
+
+var configLabels = [4]string{
+	"Download Directory",
+	"Audio Format",
+	"Audio Quality",
+	"Output Template",
+}
+
+func newConfigInputs() [4]textinput.Model {
+	var inputs [4]textinput.Model
+	for i := range inputs {
+		inp := textinput.New()
+		inp.Placeholder = configLabels[i]
+		inp.CharLimit = 512
+		inp.PromptStyle = lipgloss.NewStyle().Foreground(clrAccent)
+		inp.TextStyle = lipgloss.NewStyle().Foreground(clrBright)
+		inputs[i] = inp
+	}
+	return inputs
+}
+
 // ── fixed column widths (name is dynamic) ───────────────────────────────────
 
 const (
-	colFmt    = 6
-	colStatus = 22
-	colDate   = 12
+	colFmt       = 6
+	colStatus    = 22
+	colDate      = 12
+	maxNameWidth = 30
 	// row = cursor(2) + name(dynamic) + sp(1) + fmt + sp(1) + status + sp(1) + date
-	fixedWidth = 2 + 1 + colFmt + 1 + colStatus + 1 + colDate // = 44
-	detailRows = 5                                            // content lines in the details panel
+	fixedWidth = 2 + 1 + colFmt + 1 + colStatus + 1 + colDate // = 45
+	detailRows = 5                                             // content lines in the details panel
 )
 
 // ── mode ────────────────────────────────────────────────────────────────────
@@ -94,6 +122,7 @@ const (
 	modeList Mode = iota
 	modeAdd
 	modeDelete
+	modeConfig
 )
 
 // ── messages ────────────────────────────────────────────────────────────────
@@ -154,6 +183,10 @@ type Model struct {
 	// cancels for in-progress downloads
 	cancels map[int64]context.CancelFunc
 
+	// config modal
+	configInputs [4]textinput.Model
+	configFocus  int
+
 	// UI components
 	spinner spinner.Model
 
@@ -181,11 +214,12 @@ func NewModel(repo *library.Repository, cfg *config.Config) Model {
 	)
 
 	return Model{
-		repo:     repo,
-		cfg:      cfg,
-		addInput: inp,
-		spinner:  sp,
-		cancels:  map[int64]context.CancelFunc{},
+		repo:         repo,
+		cfg:          cfg,
+		addInput:     inp,
+		spinner:      sp,
+		cancels:      map[int64]context.CancelFunc{},
+		configInputs: newConfigInputs(),
 	}
 }
 
@@ -207,6 +241,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		// 14 = modal border (2) + padding (2*3=6) + prompt label + margins
 		m.addInput.Width = max(20, m.width-14)
+		cfgW := max(20, max(60, m.width*2/3)-14)
+		for i := range m.configInputs {
+			m.configInputs[i].Width = cfgW
+		}
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -223,6 +261,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAdd(msg)
 		case modeDelete:
 			return m.updateDelete(msg)
+		case modeConfig:
+			return m.updateConfig(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -315,6 +355,16 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.addInput.SetValue("")
 		return m, m.addInput.Focus()
 
+	case "c":
+		vals := [4]string{m.cfg.DownloadDir, m.cfg.AudioFormat, m.cfg.AudioQuality, m.cfg.OutputTemplate}
+		for i := range m.configInputs {
+			m.configInputs[i].SetValue(vals[i])
+			m.configInputs[i].Blur()
+		}
+		m.configFocus = 0
+		m.mode = modeConfig
+		return m, m.configInputs[0].Focus()
+
 	case "d":
 		if len(m.songs) > 0 {
 			m.pendingD = true
@@ -395,6 +445,52 @@ func (m Model) updateDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateConfig handles keys inside the config editor modal.
+func (m Model) updateConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.configInputs)
+	switch msg.String() {
+	case "esc":
+		for i := range m.configInputs {
+			m.configInputs[i].Blur()
+		}
+		m.mode = modeList
+		return m, nil
+
+	case "tab", "j", "down":
+		m.configInputs[m.configFocus].Blur()
+		m.configFocus = (m.configFocus + 1) % n
+		return m, m.configInputs[m.configFocus].Focus()
+
+	case "shift+tab", "k", "up":
+		m.configInputs[m.configFocus].Blur()
+		m.configFocus = (m.configFocus + n - 1) % n
+		return m, m.configInputs[m.configFocus].Focus()
+
+	case "ctrl+s":
+		for i := range m.configInputs {
+			m.configInputs[i].Blur()
+		}
+		m.mode = modeList
+		return m, saveConfigCmd(m.cfg, m.configInputs)
+
+	case "enter":
+		if m.configFocus == n-1 {
+			for i := range m.configInputs {
+				m.configInputs[i].Blur()
+			}
+			m.mode = modeList
+			return m, saveConfigCmd(m.cfg, m.configInputs)
+		}
+		m.configInputs[m.configFocus].Blur()
+		m.configFocus++
+		return m, m.configInputs[m.configFocus].Focus()
+	}
+
+	var cmd tea.Cmd
+	m.configInputs[m.configFocus], cmd = m.configInputs[m.configFocus].Update(msg)
+	return m, cmd
+}
+
 // ── view ────────────────────────────────────────────────────────────────────
 
 func (m Model) View() string {
@@ -406,6 +502,8 @@ func (m Model) View() string {
 		return m.viewAdd()
 	case modeDelete:
 		return m.viewDelete()
+	case modeConfig:
+		return m.viewConfig()
 	default:
 		return m.viewMain()
 	}
@@ -513,12 +611,43 @@ func (m Model) viewDelete() string {
 	)
 }
 
+// viewConfig renders a centred config editor modal.
+func (m Model) viewConfig() string {
+	title := sTitle.Render("⚙  Configuration")
+
+	var rows []string
+	rows = append(rows, title, "")
+	for i, inp := range m.configInputs {
+		if i == m.configFocus {
+			rows = append(rows, "  "+sDLabelSt.Render(configLabels[i]))
+		} else {
+			rows = append(rows, "  "+sMuted.Render(configLabels[i]))
+		}
+		rows = append(rows, "  "+inp.View(), "")
+	}
+
+	hint := sMuted.Render("  tab/j/k  navigate  •  ctrl+s / enter  save  •  esc  cancel")
+	rows = append(rows, hint)
+
+	content := strings.Join(rows, "\n")
+	box := sCfgModal.Width(max(60, m.width*2/3)).Render(content)
+
+	return lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(clrMuted),
+	)
+}
+
 // ── rendering helpers ───────────────────────────────────────────────────────
 
 func (m Model) nameWidth() int {
 	n := m.width - fixedWidth
 	if n < 8 {
 		return 8
+	}
+	if n > maxNameWidth {
+		return maxNameWidth
 	}
 	return n
 }
@@ -663,6 +792,7 @@ func (m Model) renderHelp() string {
 		bind("a", "add"),
 		bind("dd", "delete"),
 		bind("e", "→mp3"),
+		bind("c", "config"),
 		bind("r", "reload"),
 		bind("q", "quit"),
 	}
@@ -842,6 +972,19 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 		Progress:  100,
 		Status:    "downloaded",
 		Completed: true,
+	}
+}
+
+func saveConfigCmd(cfg *config.Config, inputs [4]textinput.Model) tea.Cmd {
+	return func() tea.Msg {
+		cfg.DownloadDir = strings.TrimSpace(inputs[0].Value())
+		cfg.AudioFormat = strings.TrimSpace(inputs[1].Value())
+		cfg.AudioQuality = strings.TrimSpace(inputs[2].Value())
+		cfg.OutputTemplate = strings.TrimSpace(inputs[3].Value())
+		if err := cfg.Save(); err != nil {
+			return actionDoneMsg{err: fmt.Errorf("save config: %w", err)}
+		}
+		return actionDoneMsg{message: "Configuration saved!"}
 	}
 }
 

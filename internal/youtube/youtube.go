@@ -44,14 +44,15 @@ func DownloadAudioWithProgress(
 		ExtractAudio().
 		AudioFormat(ext).
 		AudioQuality(cfg.AudioQuality).
-		Output(outputPath)
+		Output(outputPath).
+		Quiet().
+		NoWarnings()
 
 	if strings.Contains(url, "/playlist") {
 		dl.YesPlaylist()
 	}
 
 	if tr != nil {
-		fmt.Println("Time range:", tr.String())
 		dl.
 			DownloadSections(tr.String()).
 			ForceKeyframesAtCuts()
@@ -88,7 +89,6 @@ func DownloadAudioWithProgress(
 		return nil, err
 	}
 
-	fmt.Println(proc.Stdout)
 	return proc, nil
 }
 
