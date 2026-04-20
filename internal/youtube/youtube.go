@@ -59,11 +59,16 @@ func DownloadAudioWithProgress(
 
 	if onProgress != nil {
 		dl.ProgressFunc(time.Second, func(update yt.ProgressUpdate) {
+			format := strings.ToLower(ext)
+			if parsedExt := strings.TrimPrefix(strings.ToLower(filepath.Ext(update.Filename)), "."); parsedExt != "" {
+				format = parsedExt
+			}
+
 			progress := DownloadProgress{
 				Percent:   int(update.Percent()),
 				Completed: update.Status.IsCompletedType(),
 				FilePath:  update.Filename,
-				Format:    strings.TrimPrefix(strings.ToLower(filepath.Ext(update.Filename)), "."),
+				Format:    format,
 			}
 			if update.Info != nil && update.Info.Title != nil {
 				progress.Name = *update.Info.Title

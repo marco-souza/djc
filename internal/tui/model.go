@@ -435,7 +435,7 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 			status = "downloaded"
 		}
 
-		if err := repo.UpdateDownload(song.ID, pick(progress.Name, song.Name), pick(progress.FilePath, latestFilePath), status, progress.Percent); err != nil && !updateErrorReported {
+		if err := repo.UpdateDownload(song.ID, pick(progress.Name, song.Name), latestFilePath, status, progress.Percent); err != nil && !updateErrorReported {
 			updateErrorReported = true
 			ch <- downloadEvent{
 				SongID: song.ID,
@@ -446,7 +446,7 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 			SongID:    song.ID,
 			Name:      pick(progress.Name, song.Name),
 			Format:    pick(progress.Format, song.Format),
-			FilePath:  pick(progress.FilePath, latestFilePath),
+			FilePath:  latestFilePath,
 			Progress:  progress.Percent,
 			Status:    status,
 			Completed: progress.Completed,

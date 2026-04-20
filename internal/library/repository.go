@@ -36,6 +36,8 @@ func Open(path string) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	// SQLite supports a single writer at a time, so limiting the pool avoids
+	// "database is locked" errors during concurrent updates from download jobs.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
