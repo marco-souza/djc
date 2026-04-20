@@ -717,11 +717,11 @@ func (m Model) renderRow(idx, w int) string {
 	}
 	switch {
 	case strings.HasPrefix(song.Status, "failed"):
-		return sFailed.Render(line)
+		return sFailed.Width(w).Render(line)
 	case song.Status == "downloading":
-		return sDling.Render(line)
+		return sDling.Width(w).Render(line)
 	default:
-		return sNormal.Render(line)
+		return sNormal.Width(w).Render(line)
 	}
 }
 
@@ -742,11 +742,13 @@ func (m Model) rowStatus(song library.Song, width int) string {
 }
 
 func (m Model) renderDetails(w int) string {
+	pad := lipgloss.NewStyle().Width(w)
+
 	if len(m.songs) == 0 {
 		lines := make([]string, detailRows)
-		lines[0] = sMuted.Render("  Select a song to see details")
+		lines[0] = pad.Render(sMuted.Render("  Select a song to see details"))
 		for i := 1; i < detailRows; i++ {
-			lines[i] = ""
+			lines[i] = pad.Render("")
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -761,24 +763,25 @@ func (m Model) renderDetails(w int) string {
 		return sDValueSt.Render(s)
 	}
 
-	titleLine := "  " + sBright.Render(truncate(song.Name, w-4))
-	fmtDate := "  " + label("Format") + val(strings.ToUpper(song.Format)) +
-		"   " + label("Added") + val(song.CreatedAt.Local().Format("Mon Jan 02, 2006 15:04"))
-	statusLine := "  " + label("Status") + val(formatSongStatus(song))
-	pathLine := "  " + label("Path") + val(truncate(song.FilePath, nw))
-	srcLine := "  " + label("Source") + val(truncate(song.SourceURL, nw))
+	titleLine := pad.Render("  " + sBright.Render(truncate(song.Name, w-4)))
+	fmtDate := pad.Render("  " + label("Format") + val(strings.ToUpper(song.Format)) +
+		"   " + label("Added") + val(song.CreatedAt.Local().Format("Mon Jan 02, 2006 15:04")))
+	statusLine := pad.Render("  " + label("Status") + val(formatSongStatus(song)))
+	pathLine := pad.Render("  " + label("Path") + val(truncate(song.FilePath, nw)))
+	srcLine := pad.Render("  " + label("Source") + val(truncate(song.SourceURL, nw)))
 
 	return strings.Join([]string{titleLine, fmtDate, statusLine, pathLine, srcLine}, "\n")
 }
 
 func (m Model) renderStatus(w int) string {
+	pad := lipgloss.NewStyle().Width(w)
 	if m.statusMsg == "" {
-		return ""
+		return pad.Render("")
 	}
 	if m.statusError {
-		return sRed.Render(" " + m.statusMsg)
+		return pad.Render(sRed.Render(" " + m.statusMsg))
 	}
-	return sGreen.Render(" " + m.statusMsg)
+	return pad.Render(sGreen.Render(" " + m.statusMsg))
 }
 
 func (m Model) renderHelp() string {
