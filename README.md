@@ -48,7 +48,8 @@ bottom panel shows the details of the currently selected song.
 | `a` | Open **Add Song** modal (paste a YouTube URL) |
 | `dd` | Open **Delete** confirmation modal (vim-style double key) |
 | `e` | Export selected song to MP3 (requires `ffmpeg`) |
-| `r` | Reload song list from database |
+| `r` | Refresh/reconcile the selected song (locate/move the file or re-download it if needed) |
+| `Space` | Play / pause the selected song (requires `ffplay`, `mpv`, `afplay`, or `aplay`) |
 | `q` / `Ctrl+C` | Quit |
 
 Inside the **Add Song** modal: `Enter` starts the download, `Esc` cancels.

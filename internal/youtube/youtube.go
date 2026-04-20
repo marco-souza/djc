@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"marco-souza/djc/internal/config"
@@ -12,6 +13,8 @@ import (
 
 	yt "github.com/lrstanley/go-ytdlp"
 )
+
+var installOnce sync.Once
 
 type DownloadProgress struct {
 	Name      string
@@ -34,6 +37,13 @@ func DownloadAudioWithProgress(
 	cfg *config.Config,
 	onProgress func(DownloadProgress),
 ) (*yt.Result, error) {
+	// Install yt-dlp on first use rather than at package init time so that
+	// tests and unrelated commands are not forced to block on network I/O.
+	installOnce.Do(func() {
+		installCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		yt.MustInstall(installCtx, &yt.InstallOptions{})
+	})
 	if len(ext) == 0 {
 		ext = cfg.AudioFormat
 	}
@@ -92,8 +102,5 @@ func DownloadAudioWithProgress(
 	return proc, nil
 }
 
-func init() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	yt.MustInstall(ctx, &yt.InstallOptions{})
-}
+
+

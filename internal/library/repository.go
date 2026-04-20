@@ -83,7 +83,7 @@ func (r *Repository) ListSongs() ([]Song, error) {
 	rows, err := r.db.Query(`
 SELECT id, name, format, status, progress, file_path, source_url, created_at
 FROM songs
-ORDER BY datetime(created_at) DESC, id DESC
+ORDER BY created_at DESC, id DESC
 `)
 	if err != nil {
 		return nil, fmt.Errorf("list songs: %w", err)

@@ -114,11 +114,18 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 }
 
 func saveConfigCmd(cfg *config.Config, inputs [4]textinput.Model) tea.Cmd {
+	// Capture the new values before the closure so the mutation happens on the
+	// shared Config pointer from the bubbletea Update goroutine, not from the
+	// async Cmd goroutine, avoiding a data race.
+	downloadDir := strings.TrimSpace(inputs[0].Value())
+	audioFormat := strings.TrimSpace(inputs[1].Value())
+	audioQuality := strings.TrimSpace(inputs[2].Value())
+	outputTemplate := strings.TrimSpace(inputs[3].Value())
 	return func() tea.Msg {
-		cfg.DownloadDir = strings.TrimSpace(inputs[0].Value())
-		cfg.AudioFormat = strings.TrimSpace(inputs[1].Value())
-		cfg.AudioQuality = strings.TrimSpace(inputs[2].Value())
-		cfg.OutputTemplate = strings.TrimSpace(inputs[3].Value())
+		cfg.DownloadDir = downloadDir
+		cfg.AudioFormat = audioFormat
+		cfg.AudioQuality = audioQuality
+		cfg.OutputTemplate = outputTemplate
 		if err := cfg.Save(); err != nil {
 			return actionDoneMsg{err: fmt.Errorf("save config: %w", err)}
 		}
@@ -255,18 +262,41 @@ func playSongCmd(song library.Song) tea.Cmd {
 	return func() tea.Msg {
 		player, args := findPlayer()
 		if player == "" {
-			return actionDoneMsg{err: fmt.Errorf("no audio player found (install ffplay or mpv)")}
+			return actionDoneMsg{err: fmt.Errorf("no supported audio player found (install ffplay, mpv, afplay, or aplay)")}
 		}
 		args = append(args, song.FilePath)
 		cmd := exec.Command(player, args...)
-		devNull, err := os.Open(os.DevNull)
+
+		// Open /dev/null for stdin (read) and stdout/stderr (write) separately.
+		// Using a single read-only handle for write fds would cause the player to fail.
+		stdinNull, err := os.Open(os.DevNull)
 		if err == nil {
-			cmd.Stdin = devNull
-			cmd.Stdout = devNull
-			cmd.Stderr = devNull
+			stdoutNull, werr := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+			if werr == nil {
+				cmd.Stdin = stdinNull
+				cmd.Stdout = stdoutNull
+				cmd.Stderr = stdoutNull
+			} else {
+				_ = stdinNull.Close()
+			}
 		}
+
 		if err := cmd.Start(); err != nil {
+			// Close the /dev/null handles if Start fails.
+			if f, ok := cmd.Stdin.(*os.File); ok {
+				_ = f.Close()
+			}
+			if f, ok := cmd.Stdout.(*os.File); ok {
+				_ = f.Close()
+			}
 			return actionDoneMsg{err: fmt.Errorf("start player: %w", err)}
+		}
+		// Close our copies of the /dev/null handles; the child process has its own fds.
+		if f, ok := cmd.Stdin.(*os.File); ok {
+			_ = f.Close()
+		}
+		if f, ok := cmd.Stdout.(*os.File); ok {
+			_ = f.Close()
 		}
 		return playbackStartedMsg{songID: song.ID, name: song.Name, proc: cmd}
 	}

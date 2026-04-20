@@ -413,7 +413,7 @@ func (m *Model) cancelAllDownloads() {
 
 func (m *Model) stopPlayer() {
 	if m.playerProc != nil && m.playerProc.Process != nil {
-		// Resume before killing — a SIGSTOP'd process can't receive SIGKILL.
+		// Resume before killing so the player can shut down from a running state.
 		if m.playerPaused {
 			_ = m.playerProc.Process.Signal(syscall.SIGCONT)
 		}
