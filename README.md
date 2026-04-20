@@ -26,6 +26,20 @@ Feel free to explore the repository and see what I've been working on. If you're
 2. **Explore the Code**: Dive into the scripts and tools to see how they work.
 3. **Contribute**: If you have ideas or improvements, feel free to fork the repo and submit a pull request!
 
+## TUI
+
+Run the terminal UI with:
+
+```bash
+djc tui
+```
+
+Shortcuts:
+
+- `Ctrl+A` / `A`: add a new YouTube URL download
+- `Enter` on a selected song: open the actions menu (Info, Export as MP3, Delete)
+- `q`: quit
+
 ## Contact
 
 I'm always open to feedback, collaboration, or just a chat about music and tech. Feel free to reach out to me at [marco@tremtec.com](mailto:marco@tremtec.com).
@@ -37,4 +51,3 @@ This project is open-source and available under the [MIT License](LICENSE).
 ---
 
 Thanks for stopping by! Keep the beats rolling and the code flowing! 🎶💻
-
