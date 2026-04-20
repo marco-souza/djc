@@ -29,6 +29,10 @@ type downloadEvent struct {
 	Status    string
 	Completed bool
 	Err       error
+	// IsNew is set when this event introduces a brand-new Song row (playlist track).
+	// The TUI should prepend NewSong to its song list.
+	IsNew   bool
+	NewSong library.Song
 }
 
 type downloadStartedMsg struct {

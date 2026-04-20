@@ -53,11 +53,79 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 
 	defer close(ch)
 
+	// For playlist downloads, each track is identified by its PlaylistIndex.
+	// The pre-created placeholder `song` row is reused for the first track.
+	// Subsequent tracks get new Song rows created on the fly.
+	type trackState struct {
+		id          int64
+		latestPath  string
+		latestName  string
+		errReported bool
+	}
+	var (
+		tracks     = make(map[int]*trackState) // PlaylistIndex → state
+		firstIndex = -1                        // -1 until we see the first playlist track
+	)
+
 	var latestFilePath, latestName string
 	var updateErrReported bool
 
 	_, err := youtube.DownloadAudioWithProgress(ctx, url, cfg.AudioFormat, nil, cfg,
 		func(progress youtube.DownloadProgress) {
+			if progress.PlaylistIndex > 0 {
+				// ── Playlist track ──────────────────────────────────────
+				pIdx := progress.PlaylistIndex
+				track, exists := tracks[pIdx]
+				if !exists {
+					if firstIndex == -1 {
+						// Reuse the pre-created placeholder for the first track.
+						firstIndex = pIdx
+						track = &trackState{id: song.ID}
+					} else {
+						// Create a new Song row for this track.
+						newSong, createErr := repo.CreateSong(url, cfg.AudioFormat)
+						if createErr != nil {
+							ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("create playlist song: %w", createErr)}
+							return
+						}
+						track = &trackState{id: newSong.ID}
+						// Notify TUI to add this row to the list.
+						ch <- downloadEvent{IsNew: true, SongID: newSong.ID, NewSong: newSong}
+					}
+					tracks[pIdx] = track
+				}
+
+				if progress.FilePath != "" {
+					track.latestPath = progress.FilePath
+				}
+				if progress.Name != "" {
+					track.latestName = progress.Name
+				}
+
+				status := "downloading"
+				if progress.Completed {
+					status = "downloaded"
+				}
+
+				repoErr := repo.UpdateDownload(track.id, pick(progress.Name, song.Name), track.latestPath, status, progress.Percent)
+				if repoErr != nil && !track.errReported {
+					track.errReported = true
+					ch <- downloadEvent{SongID: track.id, Err: fmt.Errorf("update playlist song progress: %w", repoErr)}
+					return
+				}
+				ch <- downloadEvent{
+					SongID:    track.id,
+					Name:      pick(progress.Name, song.Name),
+					Format:    pick(progress.Format, song.Format),
+					FilePath:  track.latestPath,
+					Progress:  progress.Percent,
+					Status:    status,
+					Completed: progress.Completed,
+				}
+				return
+			}
+
+			// ── Single-song (non-playlist) track ─────────────────────────
 			if progress.FilePath != "" {
 				latestFilePath = progress.FilePath
 			}
@@ -88,6 +156,19 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 		})
 
 	if err != nil {
+		if len(tracks) > 0 {
+			// Mark all incomplete playlist tracks as failed.
+			errStatus := fmt.Sprintf("failed: %s", err.Error())
+			for _, track := range tracks {
+				if track.latestName == "" {
+					track.latestName = song.Name
+				}
+				_ = repo.UpdateDownload(track.id, track.latestName, track.latestPath, errStatus, 0)
+				ch <- downloadEvent{SongID: track.id, Status: errStatus, Err: err}
+			}
+			return
+		}
+		// Single-song error path.
 		errStatus := fmt.Sprintf("failed: %s", err.Error())
 		if repoErr := repo.UpdateDownload(song.ID, pick(latestName, song.Name), latestFilePath, errStatus, 0); repoErr != nil {
 			err = fmt.Errorf("%w (status save failed: %v)", err, repoErr)
@@ -96,23 +177,24 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 		return
 	}
 
-	if latestName == "" {
-		latestName = song.Name
-	}
-
-	if repoErr := repo.UpdateDownload(song.ID, latestName, latestFilePath, "downloaded", 100); repoErr != nil {
-		ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("mark song as downloaded: %w", repoErr)}
-		return
-	}
-
-	ch <- downloadEvent{
-		SongID:    song.ID,
-		Name:      latestName,
-		Format:    extensionOr(song.Format, latestFilePath),
-		FilePath:  latestFilePath,
-		Progress:  100,
-		Status:    "downloaded",
-		Completed: true,
+	// Finalize single-song downloads (playlist tracks are already finalized per-track).
+	if len(tracks) == 0 {
+		if latestName == "" {
+			latestName = song.Name
+		}
+		if repoErr := repo.UpdateDownload(song.ID, latestName, latestFilePath, "downloaded", 100); repoErr != nil {
+			ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("mark song as downloaded: %w", repoErr)}
+			return
+		}
+		ch <- downloadEvent{
+			SongID:    song.ID,
+			Name:      latestName,
+			Format:    extensionOr(song.Format, latestFilePath),
+			FilePath:  latestFilePath,
+			Progress:  100,
+			Status:    "downloaded",
+			Completed: true,
+		}
 	}
 }
 

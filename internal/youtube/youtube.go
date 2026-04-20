@@ -3,6 +3,7 @@ package youtube
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,11 +22,23 @@ var installOnce sync.Once
 const ytdlpInstallTimeout = 5 * time.Minute
 
 type DownloadProgress struct {
-	Name      string
-	Format    string
-	FilePath  string
-	Percent   int
-	Completed bool
+	Name          string
+	Format        string
+	FilePath      string
+	Percent       int
+	Completed     bool
+	PlaylistIndex int // 0 for non-playlist; ≥1 for playlist tracks
+	PlaylistCount int // total tracks in playlist, 0 if unknown
+}
+
+// IsPlaylistURL reports whether rawURL refers to a YouTube playlist
+// (either a /playlist page or a watch URL that includes a list= parameter).
+func IsPlaylistURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return u.Query().Get("list") != "" || strings.Contains(u.Path, "/playlist")
 }
 
 func DownloadAudio(url string, ext string, tr *shared.TimeRange, cfg *config.Config) error {
@@ -35,7 +48,7 @@ func DownloadAudio(url string, ext string, tr *shared.TimeRange, cfg *config.Con
 
 func DownloadAudioWithProgress(
 	ctx context.Context,
-	url string,
+	rawURL string,
 	ext string,
 	tr *shared.TimeRange,
 	cfg *config.Config,
@@ -62,8 +75,10 @@ func DownloadAudioWithProgress(
 		Quiet().
 		NoWarnings()
 
-	if strings.Contains(url, "/playlist") {
+	if IsPlaylistURL(rawURL) {
 		dl.YesPlaylist()
+	} else {
+		dl.NoPlaylist()
 	}
 
 	if tr != nil {
@@ -88,14 +103,22 @@ func DownloadAudioWithProgress(
 				FilePath:  update.Filename,
 				Format:    format,
 			}
-			if update.Info != nil && update.Info.Title != nil {
-				progress.Name = *update.Info.Title
+			if update.Info != nil {
+				if update.Info.Title != nil {
+					progress.Name = *update.Info.Title
+				}
+				if update.Info.PlaylistIndex != nil {
+					progress.PlaylistIndex = *update.Info.PlaylistIndex
+				}
+				if update.Info.PlaylistCount != nil {
+					progress.PlaylistCount = *update.Info.PlaylistCount
+				}
 			}
 			onProgress(progress)
 		})
 	}
 
-	proc, err := dl.Run(ctx, url)
+	proc, err := dl.Run(ctx, rawURL)
 	if err != nil {
 		if proc != nil {
 			return proc, fmt.Errorf("%s - %s", err, proc.Stderr)
@@ -105,6 +128,3 @@ func DownloadAudioWithProgress(
 
 	return proc, nil
 }
-
-
-

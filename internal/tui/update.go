@@ -453,6 +453,12 @@ func (m *Model) setStatus(msg string, isErr bool) {
 }
 
 func (m *Model) applyDownloadEvent(event downloadEvent) {
+	if event.IsNew {
+		// Prepend the new playlist-track song to the list so the user can see it.
+		m.songs = append([]library.Song{event.NewSong}, m.songs...)
+		return
+	}
+
 	if idx := slices.IndexFunc(m.songs, func(s library.Song) bool {
 		return s.ID == event.SongID
 	}); idx >= 0 {

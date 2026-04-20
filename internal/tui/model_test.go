@@ -37,5 +37,3 @@ func TestFormatSongStatus(t *testing.T) {
 		})
 	}
 }
-
-
