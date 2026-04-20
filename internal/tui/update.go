@@ -5,7 +5,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"marco-souza/djc/internal/library"
@@ -110,6 +109,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadStartedMsg:
 		m.cancels[msg.Song.ID] = msg.cancel
+		m.cancelSongIDs[msg.ch] = msg.Song.ID
 		if msg.reDownload {
 			// Update the existing row in-place instead of prepending a duplicate.
 			if idx := slices.IndexFunc(m.songs, func(s library.Song) bool { return s.ID == msg.Song.ID }); idx >= 0 {
@@ -125,6 +125,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadUpdateMsg:
 		if !msg.ok {
+			// Clean up the cancel for this download.
+			if id, ok := m.cancelSongIDs[msg.ch]; ok {
+				delete(m.cancels, id)
+				delete(m.cancelSongIDs, msg.ch)
+			}
 			cmds = append(cmds, refreshSongsCmd(m.repo))
 			// Start the next queued download if the download pool is now idle.
 			if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
@@ -135,9 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.applyDownloadEvent(msg.event)
-		if msg.event.Completed || msg.event.Err != nil {
-			delete(m.cancels, msg.event.SongID)
-		}
+
 		cmds = append(cmds, waitForDownloadUpdate(msg.ch))
 
 	case actionDoneMsg:
@@ -146,6 +149,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus(msg.message, false)
 			cmds = append(cmds, refreshSongsCmd(m.repo))
+		}
+
+	case configSavedMsg:
+		if msg.err != nil {
+			m.setError(msg.err.Error())
+		} else {
+			// Apply the new config values from the Update goroutine (not the Cmd
+			// goroutine) to avoid a data race with concurrent download goroutines.
+			m.cfg.DownloadDir = msg.downloadDir
+			m.cfg.AudioFormat = msg.audioFormat
+			m.cfg.AudioQuality = msg.audioQuality
+			m.cfg.OutputTemplate = msg.outputTemplate
+			m.setStatus("Configuration saved!", false)
 		}
 
 	case playbackStartedMsg:
@@ -289,11 +305,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Same song playing: toggle pause/resume.
 		if m.playerProc != nil && m.playerSongID == song.ID {
 			if m.playerPaused {
-				_ = m.playerProc.Process.Signal(syscall.SIGCONT)
+				_ = resumeProcess(m.playerProc.Process)
 				m.playerPaused = false
 				m.setStatus("▶ "+song.Name, false)
 			} else {
-				_ = m.playerProc.Process.Signal(syscall.SIGSTOP)
+				_ = pauseProcess(m.playerProc.Process)
 				m.playerPaused = true
 				m.setStatus("⏸ "+song.Name, false)
 			}
@@ -617,6 +633,9 @@ func (m *Model) cancelAllDownloads() {
 		cancel()
 		delete(m.cancels, id)
 	}
+	for ch := range m.cancelSongIDs {
+		delete(m.cancelSongIDs, ch)
+	}
 	m.stopPlayer()
 }
 
@@ -624,48 +643,47 @@ func (m *Model) cancelAllDownloads() {
 // were left in "queued" status (or were mid-download when the app was last
 // closed) so they are resumed in insertion order (oldest first).
 func (m *Model) resumeQueuedDownloads() []tea.Cmd {
-// m.songs is ordered newest-first; iterate in reverse to get oldest-first.
-var toResume []library.Song
-for i := len(m.songs) - 1; i >= 0; i-- {
-s := m.songs[i]
-if s.Status == "queued" || s.Status == "downloading" {
-toResume = append(toResume, s)
-}
-}
-if len(toResume) == 0 {
-return nil
-}
+	// m.songs is ordered newest-first; iterate in reverse to get oldest-first.
+	var toResume []library.Song
+	for i := len(m.songs) - 1; i >= 0; i-- {
+		s := m.songs[i]
+		if s.Status == "queued" || s.Status == "downloading" {
+			toResume = append(toResume, s)
+		}
+	}
+	if len(toResume) == 0 {
+		return nil
+	}
 
-// Reset any interrupted "downloading" entries to "queued" in-memory so
-// the list shows the correct state before the download restarts.
-for i := range m.songs {
-if m.songs[i].Status == "downloading" {
-m.songs[i].Status = "queued"
-m.songs[i].Progress = 0
-}
-}
+	// Reset any interrupted "downloading" entries to "queued" in-memory so
+	// the list shows the correct state before the download restarts.
+	for i := range m.songs {
+		if m.songs[i].Status == "downloading" {
+			m.songs[i].Status = "queued"
+			m.songs[i].Progress = 0
+		}
+	}
 
-for _, song := range toResume {
-song.Status = "queued"
-m.downloadQueue = append(m.downloadQueue, queuedDownload{Song: song, URL: song.SourceURL})
-}
+	for _, song := range toResume {
+		song.Status = "queued"
+		m.downloadQueue = append(m.downloadQueue, queuedDownload{Song: song, URL: song.SourceURL})
+	}
 
-var cmds []tea.Cmd
-// Kick off the first download if nothing is already in-flight.
-if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
-next := m.downloadQueue[0]
-m.downloadQueue = m.downloadQueue[1:]
-cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+	var cmds []tea.Cmd
+	// Kick off the first download if nothing is already in-flight.
+	if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
+		next := m.downloadQueue[0]
+		m.downloadQueue = m.downloadQueue[1:]
+		cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+	}
+	return cmds
 }
-return cmds
-}
-
 
 func (m *Model) stopPlayer() {
 	if m.playerProc != nil && m.playerProc.Process != nil {
 		// Resume before killing so the player can shut down from a running state.
 		if m.playerPaused {
-			_ = m.playerProc.Process.Signal(syscall.SIGCONT)
+			_ = resumeProcess(m.playerProc.Process)
 		}
 		_ = m.playerProc.Process.Kill()
 	}

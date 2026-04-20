@@ -90,6 +90,17 @@ type downloadsQueuedMsg struct {
 	urls  []string
 }
 
+// configSavedMsg is sent after the config has been persisted to disk.
+// Applying the new values in the Update handler (not inside the Cmd goroutine)
+// avoids a data race with concurrent download goroutines that read m.cfg.
+type configSavedMsg struct {
+	downloadDir    string
+	audioFormat    string
+	audioQuality   string
+	outputTemplate string
+	err            error
+}
+
 // queuedDownload holds a song that is waiting its turn in the download queue.
 type queuedDownload struct {
 	Song library.Song

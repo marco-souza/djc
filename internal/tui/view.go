@@ -537,7 +537,7 @@ func truncate(s string, limit int) string {
 	return string(runes[:limit-1]) + "…"
 }
 
-// truncatePlain truncates a plain (possibly ANSI-free) byte string by byte position.
+// truncatePlain truncates a plain (possibly ANSI-free) string by rune count.
 // Used only for lines where we know there are no escape codes.
 func truncatePlain(s string, limit int) string {
 	if len([]rune(s)) <= limit {

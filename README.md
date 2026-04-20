@@ -46,6 +46,7 @@ bottom panel shows the details of the currently selected song.
 | `g` | Jump to top |
 | `G` | Jump to bottom |
 | `a` | Open **Add Song** modal (paste a YouTube URL) |
+| `c` | Open **Config** modal (edit download directory, format, quality, output template) |
 | `dd` | Open **Delete** confirmation modal (vim-style double key) |
 | `e` | Export selected song to MP3 (requires `ffmpeg`) |
 | `r` | Refresh/reconcile the selected song (locate/move the file or re-download it if needed) |

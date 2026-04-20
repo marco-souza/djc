@@ -226,22 +226,29 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 }
 
 func saveConfigCmd(cfg *config.Config, inputs [4]textinput.Model) tea.Cmd {
-	// Capture the new values before the closure so the mutation happens on the
-	// shared Config pointer from the bubbletea Update goroutine, not from the
-	// async Cmd goroutine, avoiding a data race.
+	// Capture new values from the UI inputs immediately (in the Update goroutine)
+	// so the Cmd goroutine never reads the textinput models directly.
 	downloadDir := strings.TrimSpace(inputs[0].Value())
 	audioFormat := strings.TrimSpace(inputs[1].Value())
 	audioQuality := strings.TrimSpace(inputs[2].Value())
 	outputTemplate := strings.TrimSpace(inputs[3].Value())
 	return func() tea.Msg {
-		cfg.DownloadDir = downloadDir
-		cfg.AudioFormat = audioFormat
-		cfg.AudioQuality = audioQuality
-		cfg.OutputTemplate = outputTemplate
-		if err := cfg.Save(); err != nil {
-			return actionDoneMsg{err: fmt.Errorf("save config: %w", err)}
+		// Build a temporary copy with the new user-editable fields so we can
+		// call Save() without mutating the shared *cfg pointer from this goroutine.
+		tmp := *cfg
+		tmp.DownloadDir = downloadDir
+		tmp.AudioFormat = audioFormat
+		tmp.AudioQuality = audioQuality
+		tmp.OutputTemplate = outputTemplate
+		if err := tmp.Save(); err != nil {
+			return configSavedMsg{err: fmt.Errorf("save config: %w", err)}
 		}
-		return actionDoneMsg{message: "Configuration saved!"}
+		return configSavedMsg{
+			downloadDir:    downloadDir,
+			audioFormat:    audioFormat,
+			audioQuality:   audioQuality,
+			outputTemplate: outputTemplate,
+		}
 	}
 }
 
