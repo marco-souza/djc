@@ -1210,6 +1210,8 @@ func findSongFile(song library.Song, dir string) string {
 // ── playback commands ────────────────────────────────────────────────────────
 
 // playSongCmd starts the system audio player for the given song in a subprocess.
+// stdin/stdout/stderr are redirected to os.DevNull so the player never interacts
+// with the TUI's raw terminal (which would cause it to exit immediately).
 func playSongCmd(song library.Song) tea.Cmd {
 	return func() tea.Msg {
 		player, args := findPlayer()
@@ -1218,6 +1220,12 @@ func playSongCmd(song library.Song) tea.Cmd {
 		}
 		args = append(args, song.FilePath)
 		cmd := exec.Command(player, args...)
+		devNull, err := os.Open(os.DevNull)
+		if err == nil {
+			cmd.Stdin = devNull
+			cmd.Stdout = devNull
+			cmd.Stderr = devNull
+		}
 		if err := cmd.Start(); err != nil {
 			return actionDoneMsg{err: fmt.Errorf("start player: %w", err)}
 		}
