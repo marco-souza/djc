@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"marco-souza/djc/internal/config"
 	"marco-souza/djc/internal/library"
@@ -161,6 +162,16 @@ type refreshMsg struct {
 	err   error
 }
 
+type playbackStartedMsg struct {
+	songID int64
+	name   string
+	proc   *exec.Cmd
+}
+
+type playbackEndedMsg struct {
+	songID int64
+}
+
 // ── model ───────────────────────────────────────────────────────────────────
 
 type Model struct {
@@ -183,6 +194,11 @@ type Model struct {
 
 	// cancels for in-progress downloads
 	cancels map[int64]context.CancelFunc
+
+	// playback
+	playerProc   *exec.Cmd
+	playerSongID int64 // 0 = nothing playing
+	playerPaused bool
 
 	// config modal
 	configInputs [4]textinput.Model
@@ -309,6 +325,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(msg.message, false)
 			cmds = append(cmds, refreshSongsCmd(m.repo))
 		}
+
+	case playbackStartedMsg:
+		m.playerProc = msg.proc
+		m.playerSongID = msg.songID
+		m.playerPaused = false
+		m.setStatus("▶ "+msg.name, false)
+		cmds = append(cmds, waitForPlaybackEndCmd(msg.songID, msg.proc))
+
+	case playbackEndedMsg:
+		if m.playerSongID == msg.songID {
+			m.playerProc = nil
+			m.playerSongID = 0
+			m.playerPaused = false
+			m.setStatus("", false)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -395,6 +426,32 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("Refreshing…", false)
 			return m, refreshSelectedSongCmd(m.repo, m.cfg, song)
 		}
+
+	case " ":
+		if len(m.songs) == 0 {
+			break
+		}
+		song := m.songs[m.cursor]
+		if song.FilePath == "" || song.Status != "downloaded" {
+			m.setError("Song not downloaded yet")
+			break
+		}
+		// Same song playing: toggle pause/resume.
+		if m.playerProc != nil && m.playerSongID == song.ID {
+			if m.playerPaused {
+				_ = m.playerProc.Process.Signal(syscall.SIGCONT)
+				m.playerPaused = false
+				m.setStatus("▶ "+song.Name, false)
+			} else {
+				_ = m.playerProc.Process.Signal(syscall.SIGSTOP)
+				m.playerPaused = true
+				m.setStatus("⏸ "+song.Name, false)
+			}
+			break
+		}
+		// Different or no song: stop current and start the new one.
+		m.stopPlayer()
+		return m, playSongCmd(song)
 
 	case "esc":
 		m.setStatus("", false)
@@ -743,6 +800,13 @@ func (m Model) renderRow(idx, w int) string {
 }
 
 func (m Model) rowStatus(song library.Song, width int) string {
+	// Show playback state for the currently playing/paused song.
+	if m.playerSongID == song.ID {
+		if m.playerPaused {
+			return truncate("⏸ paused", width)
+		}
+		return truncate("▶ playing", width)
+	}
 	switch {
 	case song.Status == "downloading":
 		bar := progressBar(song.Progress, 8)
@@ -814,6 +878,7 @@ func (m Model) renderHelp() string {
 		bind("e", "→mp3"),
 		bind("c", "config"),
 		bind("r", "refresh"),
+		bind("spc", "play/pause"),
 		bind("q", "quit"),
 	}
 	return " " + strings.Join(parts, sep)
@@ -896,6 +961,20 @@ func (m *Model) cancelAllDownloads() {
 		cancel()
 		delete(m.cancels, id)
 	}
+	m.stopPlayer()
+}
+
+func (m *Model) stopPlayer() {
+	if m.playerProc != nil && m.playerProc.Process != nil {
+		// Resume before killing — a SIGSTOP'd process can't receive SIGKILL.
+		if m.playerPaused {
+			_ = m.playerProc.Process.Signal(syscall.SIGCONT)
+		}
+		_ = m.playerProc.Process.Kill()
+	}
+	m.playerProc = nil
+	m.playerSongID = 0
+	m.playerPaused = false
 }
 
 // ── commands ────────────────────────────────────────────────────────────────
@@ -1126,6 +1205,49 @@ func findSongFile(song library.Song, dir string) string {
 		return nil
 	})
 	return found
+}
+
+// ── playback commands ────────────────────────────────────────────────────────
+
+// playSongCmd starts the system audio player for the given song in a subprocess.
+func playSongCmd(song library.Song) tea.Cmd {
+	return func() tea.Msg {
+		player, args := findPlayer()
+		if player == "" {
+			return actionDoneMsg{err: fmt.Errorf("no audio player found (install ffplay or mpv)")}
+		}
+		args = append(args, song.FilePath)
+		cmd := exec.Command(player, args...)
+		if err := cmd.Start(); err != nil {
+			return actionDoneMsg{err: fmt.Errorf("start player: %w", err)}
+		}
+		return playbackStartedMsg{songID: song.ID, name: song.Name, proc: cmd}
+	}
+}
+
+// waitForPlaybackEndCmd blocks until the player process exits, then notifies the TUI.
+func waitForPlaybackEndCmd(songID int64, proc *exec.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		_ = proc.Wait()
+		return playbackEndedMsg{songID: songID}
+	}
+}
+
+// findPlayer returns the first available audio player binary and its arguments.
+func findPlayer() (string, []string) {
+	if p, err := exec.LookPath("ffplay"); err == nil {
+		return p, []string{"-nodisp", "-autoexit", "-loglevel", "quiet"}
+	}
+	if p, err := exec.LookPath("mpv"); err == nil {
+		return p, []string{"--no-video", "--really-quiet"}
+	}
+	if p, err := exec.LookPath("afplay"); err == nil { // macOS
+		return p, nil
+	}
+	if p, err := exec.LookPath("aplay"); err == nil { // Linux ALSA
+		return p, nil
+	}
+	return "", nil
 }
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
