@@ -85,5 +85,5 @@ func DownloadAudioWithProgress(
 }
 
 func init() {
-	yt.MustInstall(context.TODO(), &yt.InstallOptions{})
+	yt.MustInstall(context.Background(), &yt.InstallOptions{})
 }

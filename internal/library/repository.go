@@ -36,6 +36,8 @@ func Open(path string) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	repo := &Repository{db: db}
 	if err := repo.migrate(); err != nil {

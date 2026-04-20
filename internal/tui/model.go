@@ -420,6 +420,7 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 
 	var latestFilePath string
 	var latestName string
+	var updateErrorReported bool
 
 	_, err := youtube.DownloadAudioWithProgress(ctx, url, cfg.AudioFormat, nil, cfg, func(progress youtube.DownloadProgress) {
 		if progress.FilePath != "" {
@@ -434,7 +435,13 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 			status = "downloaded"
 		}
 
-		_ = repo.UpdateDownload(song.ID, pick(progress.Name, song.Name), pick(progress.FilePath, latestFilePath), status, progress.Percent)
+		if err := repo.UpdateDownload(song.ID, pick(progress.Name, song.Name), pick(progress.FilePath, latestFilePath), status, progress.Percent); err != nil && !updateErrorReported {
+			updateErrorReported = true
+			ch <- downloadEvent{
+				SongID: song.ID,
+				Err:    fmt.Errorf("update song progress: %w", err),
+			}
+		}
 		ch <- downloadEvent{
 			SongID:    song.ID,
 			Name:      pick(progress.Name, song.Name),
@@ -447,7 +454,9 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 	})
 	if err != nil {
 		errStatus := fmt.Sprintf("failed: %s", err.Error())
-		_ = repo.UpdateDownload(song.ID, pick(latestName, song.Name), latestFilePath, errStatus, 0)
+		if repoErr := repo.UpdateDownload(song.ID, pick(latestName, song.Name), latestFilePath, errStatus, 0); repoErr != nil {
+			err = fmt.Errorf("%w (status save failed: %v)", err, repoErr)
+		}
 		ch <- downloadEvent{SongID: song.ID, Status: errStatus, Err: err}
 		return
 	}
@@ -456,7 +465,13 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 		latestName = song.Name
 	}
 
-	_ = repo.UpdateDownload(song.ID, latestName, latestFilePath, "downloaded", 100)
+	if err := repo.UpdateDownload(song.ID, latestName, latestFilePath, "downloaded", 100); err != nil {
+		ch <- downloadEvent{
+			SongID: song.ID,
+			Err:    fmt.Errorf("mark song as downloaded: %w", err),
+		}
+		return
+	}
 	ch <- downloadEvent{
 		SongID:    song.ID,
 		Name:      latestName,
