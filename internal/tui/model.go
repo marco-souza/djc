@@ -7,6 +7,8 @@ import (
 "marco-souza/djc/internal/config"
 "marco-souza/djc/internal/library"
 
+"github.com/charmbracelet/bubbles/help"
+"github.com/charmbracelet/bubbles/progress"
 "github.com/charmbracelet/bubbles/spinner"
 "github.com/charmbracelet/bubbles/textinput"
 tea "github.com/charmbracelet/bubbletea"
@@ -46,7 +48,9 @@ configInputs [4]textinput.Model
 configFocus  int
 
 // UI components
-spinner spinner.Model
+spinner          spinner.Model
+helpModel        help.Model
+downloadProgress progress.Model
 
 // terminal dimensions
 width, height int
@@ -71,13 +75,28 @@ spinner.WithSpinner(spinner.MiniDot),
 spinner.WithStyle(lipgloss.NewStyle().Foreground(clrYellow)),
 )
 
+h := help.New()
+h.ShortSeparator = "  │  "
+h.Styles.ShortKey = sKey
+h.Styles.ShortDesc = sMuted
+h.Styles.ShortSeparator = sMuted
+h.Styles.Ellipsis = sMuted
+
+pb := progress.New(
+progress.WithWidth(10),
+progress.WithoutPercentage(),
+progress.WithGradient(string(clrYellow), string(clrGreen)),
+)
+
 return Model{
-repo:         repo,
-cfg:          cfg,
-addInput:     inp,
-spinner:      sp,
-cancels:      map[int64]context.CancelFunc{},
-configInputs: newConfigInputs(),
+repo:             repo,
+cfg:              cfg,
+addInput:         inp,
+spinner:          sp,
+helpModel:        h,
+downloadProgress: pb,
+cancels:          map[int64]context.CancelFunc{},
+configInputs:     newConfigInputs(),
 }
 }
 

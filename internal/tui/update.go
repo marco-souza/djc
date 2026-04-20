@@ -21,6 +21,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
+		m.helpModel.Width = m.width
 		// 14 = modal border (2) + padding (2*3=6) + prompt label + margins
 		m.addInput.Width = max(20, m.width-14)
 		cfgW := max(20, max(60, m.width*2/3)-14)

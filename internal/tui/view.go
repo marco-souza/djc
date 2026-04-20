@@ -254,7 +254,7 @@ func (m Model) rowStatus(song library.Song, width int) string {
 	}
 	switch {
 	case song.Status == "downloading":
-		bar := progressBar(song.Progress, 8)
+		bar := m.downloadProgress.ViewAs(float64(song.Progress) / 100)
 		pct := fmt.Sprintf("%3d%%", song.Progress)
 		s := m.spinner.View() + " " + bar + " " + pct
 		return truncate(s, width)
@@ -311,36 +311,10 @@ func (m Model) renderStatus(w int) string {
 }
 
 func (m Model) renderHelp() string {
-	bind := func(k, desc string) string {
-		return sKey.Render(k) + sMuted.Render(" "+desc)
-	}
-	sep := sMuted.Render("  │  ")
-	parts := []string{
-		bind("j/k", "move"),
-		bind("g/G", "top/bottom"),
-		bind("a", "add"),
-		bind("dd", "delete"),
-		bind("e", "→mp3"),
-		bind("c", "config"),
-		bind("r", "refresh"),
-		bind("spc", "play/pause"),
-		bind("q", "quit"),
-	}
-	return " " + strings.Join(parts, sep)
+	return " " + m.helpModel.View(defaultKeys)
 }
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
-
-func progressBar(pct, width int) string {
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 100 {
-		pct = 100
-	}
-	filled := (pct * width) / 100
-	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
-}
 
 func formatSongStatus(song library.Song) string {
 	switch {
