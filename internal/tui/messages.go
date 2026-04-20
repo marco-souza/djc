@@ -1,0 +1,65 @@
+package tui
+
+import (
+	"context"
+	"os/exec"
+
+	"marco-souza/djc/internal/library"
+)
+
+// ── mode ────────────────────────────────────────────────────────────────────
+
+type Mode int
+
+const (
+	modeList Mode = iota
+	modeAdd
+	modeDelete
+	modeConfig
+)
+
+// ── messages ────────────────────────────────────────────────────────────────
+
+type downloadEvent struct {
+	SongID    int64
+	Name      string
+	Format    string
+	FilePath  string
+	Progress  int
+	Status    string
+	Completed bool
+	Err       error
+}
+
+type downloadStartedMsg struct {
+	Song       library.Song
+	ch         <-chan downloadEvent
+	cancel     context.CancelFunc
+	reDownload bool // true when refreshing an existing song (don't prepend to list)
+}
+
+type downloadUpdateMsg struct {
+	event downloadEvent
+	ch    <-chan downloadEvent
+	ok    bool
+}
+
+type actionDoneMsg struct {
+	message string
+	err     error
+}
+
+type refreshMsg struct {
+	songs []library.Song
+	err   error
+}
+
+type playbackStartedMsg struct {
+	songID int64
+	name   string
+	proc   *exec.Cmd
+}
+
+type playbackEndedMsg struct {
+	songID int64
+}
