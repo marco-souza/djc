@@ -9,3 +9,6 @@
 *.flac
 *.m4a
 
+
+# Maestro Setup
+.maestro/
