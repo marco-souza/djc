@@ -179,6 +179,7 @@ func (r *Repository) DeleteSong(id int64) error {
 	return nil
 }
 
+// GetSong returns a single song by ID.
 func (r *Repository) GetSong(id int64) (Song, error) {
 	row := r.db.QueryRow(`
 SELECT id, name, format, status, progress, file_path, source_url, created_at
@@ -195,6 +196,56 @@ WHERE id = ?
 	}
 
 	return song, nil
+}
+
+// GetQueuedSongs returns all songs with status='queued' ordered by created_at ASC (FIFO).
+func (r *Repository) GetQueuedSongs() ([]Song, error) {
+	rows, err := r.db.Query(`
+SELECT id, name, format, status, progress, file_path, source_url, created_at
+FROM songs
+WHERE status = 'queued'
+ORDER BY created_at ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("get queued songs: %w", err)
+	}
+	defer rows.Close()
+
+	var songs []Song
+	for rows.Next() {
+		song, err := scanSong(rows)
+		if err != nil {
+			return nil, err
+		}
+		songs = append(songs, song)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued songs: %w", err)
+	}
+
+	return songs, nil
+}
+
+// ResetDownloadingToQueued resets all songs with status='downloading' to 'queued'.
+// This is used on startup to recover from crashed downloads.
+// Returns the number of songs reset.
+func (r *Repository) ResetDownloadingToQueued() (int64, error) {
+	res, err := r.db.Exec(`
+UPDATE songs
+SET status = 'queued', progress = 0, updated_at = ?
+WHERE status = 'downloading'
+`, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, fmt.Errorf("reset downloading songs: %w", err)
+	}
+
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+
+	return count, nil
 }
 
 type songScanner interface {

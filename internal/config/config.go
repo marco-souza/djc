@@ -10,17 +10,21 @@ import (
 
 // Default configuration values
 const (
-	DefaultAudioFormat  = "flac"
-	DefaultAudioQuality = "0"
-	AppName             = "djc"
+	DefaultAudioFormat    = "flac"
+	DefaultAudioQuality   = "0"
+	AppName              = "djc"
+	DefaultDownloadWorkers = 1
+	MinDownloadWorkers    = 1
+	MaxDownloadWorkers    = 10
 )
 
 // Config holds all application configuration
 type Config struct {
 	// Download settings
-	DownloadDir  string `yaml:"download_dir"`
-	AudioFormat  string `yaml:"audio_format"`
-	AudioQuality string `yaml:"audio_quality"`
+	DownloadDir     string `yaml:"download_dir"`
+	AudioFormat     string `yaml:"audio_format"`
+	AudioQuality    string `yaml:"audio_quality"`
+	DownloadWorkers int    `yaml:"download_workers"`
 
 	// Database settings
 	DatabasePath string `yaml:"database_path"`
@@ -37,12 +41,13 @@ func DefaultConfig() *Config {
 	dataDir := defaultDataDir()
 
 	return &Config{
-		DownloadDir:    filepath.Join(dataDir, "downloads"),
-		AudioFormat:    DefaultAudioFormat,
-		AudioQuality:   DefaultAudioQuality,
-		DatabasePath:   filepath.Join(dataDir, "library.db"),
-		LibraryDir:     dataDir,
-		OutputTemplate: "%(playlist)s/%(title)s.%(ext)s",
+		DownloadDir:     filepath.Join(dataDir, "downloads"),
+		AudioFormat:     DefaultAudioFormat,
+		AudioQuality:    DefaultAudioQuality,
+		DownloadWorkers: DefaultDownloadWorkers,
+		DatabasePath:    filepath.Join(dataDir, "library.db"),
+		LibraryDir:      dataDir,
+		OutputTemplate:  "%(playlist)s/%(title)s.%(ext)s",
 	}
 }
 
@@ -125,6 +130,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.OutputTemplate == "" {
 		c.OutputTemplate = defaults.OutputTemplate
+	}
+	if c.DownloadWorkers < MinDownloadWorkers {
+		c.DownloadWorkers = MinDownloadWorkers
+	}
+	if c.DownloadWorkers > MaxDownloadWorkers {
+		c.DownloadWorkers = MaxDownloadWorkers
 	}
 }
 

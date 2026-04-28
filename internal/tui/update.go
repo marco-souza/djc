@@ -43,7 +43,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelAllDownloads()
 			return m, tea.Quit
 		}
-		switch m.mode {
+	switch m.mode {
 		case modeAdd:
 			return m.updateAdd(msg)
 		case modeConfirm:
@@ -52,6 +52,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDelete(msg)
 		case modeConfig:
 			return m.updateConfig(msg)
+		case modeDropDB:
+			return m.updateDropDB(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -91,10 +93,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i, song := range msg.songs {
 			m.downloadQueue = append(m.downloadQueue, queuedDownload{Song: song, URL: msg.urls[i]})
 		}
-		// Start the first download immediately if nothing is already downloading.
-		if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
+		// Fill worker pool up to maxWorkers with queued downloads.
+		for len(m.downloadPool.active)+m.downloadPool.pending < m.downloadPool.maxWorkers && len(m.downloadQueue) > 0 {
 			next := m.downloadQueue[0]
 			m.downloadQueue = m.downloadQueue[1:]
+			m.downloadPool.pending++
 			cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
 		}
 		n := len(msg.songs)
@@ -104,8 +107,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatus(fmt.Sprintf("%d %s added to queue", n, word), false)
 
+	case queuedSongsLoadedMsg:
+		if msg.err != nil {
+			m.setError("Failed to load queued songs: " + msg.err.Error())
+			break
+		}
+		if len(msg.songs) == 0 {
+			break
+		}
+		for _, song := range msg.songs {
+			m.downloadQueue = append(m.downloadQueue, queuedDownload{Song: song, URL: song.SourceURL})
+		}
+		// Fill worker pool up to maxWorkers with queued downloads.
+		for len(m.downloadPool.active)+m.downloadPool.pending < m.downloadPool.maxWorkers && len(m.downloadQueue) > 0 {
+			next := m.downloadQueue[0]
+			m.downloadQueue = m.downloadQueue[1:]
+			m.downloadPool.pending++
+			cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+		}
+		m.setStatus(fmt.Sprintf("Resumed %d queued download(s)", len(msg.songs)), false)
+
 	case downloadStartedMsg:
-		m.cancels[msg.Song.ID] = msg.cancel
+		m.downloadPool.active[msg.Song.ID] = msg.cancel
+		m.downloadPool.pending--
 		if msg.reDownload {
 			// Update the existing row in-place instead of prepending a duplicate.
 			if idx := slices.IndexFunc(m.songs, func(s library.Song) bool { return s.ID == msg.Song.ID }); idx >= 0 {
@@ -122,9 +146,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case downloadUpdateMsg:
 		if !msg.ok {
 			cmds = append(cmds, refreshSongsCmd(m.repo))
-			// Start the next queued download if the download pool is now idle.
-			if len(m.cancels) == 0 && len(m.downloadQueue) > 0 {
+			// Remove from pool and fill worker slots with queued downloads.
+			delete(m.downloadPool.active, msg.event.SongID)
+			for len(m.downloadPool.active)+m.downloadPool.pending < m.downloadPool.maxWorkers && len(m.downloadQueue) > 0 {
 				next := m.downloadQueue[0]
+				m.downloadPool.pending++
 				m.downloadQueue = m.downloadQueue[1:]
 				cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
 			}
@@ -132,7 +158,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyDownloadEvent(msg.event)
 		if msg.event.Completed || msg.event.Err != nil {
-			delete(m.cancels, msg.event.SongID)
+			delete(m.downloadPool.active, msg.event.SongID)
+			// Fill worker pool with queued downloads after completion.
+			for len(m.downloadPool.active)+m.downloadPool.pending < m.downloadPool.maxWorkers && len(m.downloadQueue) > 0 {
+				next := m.downloadQueue[0]
+				m.downloadPool.pending++
+				m.downloadQueue = m.downloadQueue[1:]
+				cmds = append(cmds, startQueuedDownloadCmd(m.repo, m.cfg, next))
+			}
 		}
 		cmds = append(cmds, waitForDownloadUpdate(msg.ch))
 
@@ -210,6 +243,11 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cancelAllDownloads()
 		return m, tea.Quit
 
+	case "ctrl+d":
+		m.mode = modeDropDB
+		m.deleteConf = false
+		return m, nil
+
 	case "j", "down":
 		if m.cursor < len(m.songs)-1 {
 			m.cursor++
@@ -242,7 +280,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.addInput.Focus()
 
 	case "c":
-		vals := [4]string{m.cfg.DownloadDir, m.cfg.AudioFormat, m.cfg.AudioQuality, m.cfg.OutputTemplate}
+		vals := [5]string{m.cfg.DownloadDir, m.cfg.AudioFormat, m.cfg.AudioQuality, m.cfg.OutputTemplate, fmt.Sprintf("%d", m.cfg.DownloadWorkers)}
 		for i := range m.configInputs {
 			m.configInputs[i].SetValue(vals[i])
 			m.configInputs[i].Blur()
@@ -265,7 +303,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		if len(m.songs) > 0 {
 			song := m.songs[m.cursor]
-			if _, downloading := m.cancels[song.ID]; downloading {
+			if _, downloading := m.downloadPool.active[song.ID]; downloading {
 				m.setStatus("Download already in progress", false)
 				break
 			}
@@ -526,6 +564,35 @@ func (m Model) updateConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// updateDropDB handles keys inside the drop database confirmation modal.
+func (m Model) updateDropDB(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "n", "q":
+		m.mode = modeList
+		return m, nil
+
+	case "h", "left", "tab":
+		m.deleteConf = !m.deleteConf
+
+	case "l", "right":
+		m.deleteConf = !m.deleteConf
+
+	case "y":
+		// instant yes
+		m.mode = modeList
+		return m, dropDBCmd(m.repo)
+
+	case "enter":
+		if m.deleteConf {
+			m.mode = modeList
+			return m, dropDBCmd(m.repo)
+		}
+		m.mode = modeList
+	}
+
+	return m, nil
+}
+
 // ── layout helpers ───────────────────────────────────────────────────────────
 
 // listHeight returns the number of visible song rows.
@@ -609,9 +676,9 @@ func (m *Model) applyDownloadEvent(event downloadEvent) {
 }
 
 func (m *Model) cancelAllDownloads() {
-	for id, cancel := range m.cancels {
+	for id, cancel := range m.downloadPool.active {
 		cancel()
-		delete(m.cancels, id)
+		delete(m.downloadPool.active, id)
 	}
 	m.stopPlayer()
 }

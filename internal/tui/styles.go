@@ -72,15 +72,16 @@ var (
 
 // ── config field metadata ────────────────────────────────────────────────────
 
-var configLabels = [4]string{
+var configLabels = [5]string{
 	"Download Directory",
 	"Audio Format",
 	"Audio Quality",
 	"Output Template",
+	"Download Workers (1-10)",
 }
 
-func newConfigInputs() [4]textinput.Model {
-	var inputs [4]textinput.Model
+func newConfigInputs() [5]textinput.Model {
+	var inputs [5]textinput.Model
 	for i := range inputs {
 		inp := textinput.New()
 		inp.Placeholder = configLabels[i]

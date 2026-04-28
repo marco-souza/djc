@@ -26,6 +26,8 @@ func (m Model) View() string {
 		return m.viewDelete()
 	case modeConfig:
 		return m.viewConfig()
+	case modeDropDB:
+		return m.viewDropDB()
 	default:
 		return m.viewMain()
 	}
@@ -239,6 +241,34 @@ func (m Model) viewDelete() string {
 
 	hint := sMuted.Render("  h/l  toggle  •  enter  confirm  •  esc / n  cancel")
 	yHint := sMuted.Render("  y  delete immediately")
+
+	content := strings.Join([]string{title, "", nameStr, warning, "", buttons, "", hint, yHint}, "\n")
+	box := sDelModal.Width(max(60, m.width/2)).Render(content)
+
+	return lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(clrMuted),
+	)
+}
+
+func (m Model) viewDropDB() string {
+	title := sRed.Bold(true).Render("  Drop Database?")
+	nameStr := lipgloss.NewStyle().Italic(true).Foreground(clrSubtle).Render(`  This will delete ALL songs and downloaded files.`)
+	warning := sMuted.Render("  This action cannot be undone.")
+
+	var btnDel, btnCancel string
+	if m.deleteConf {
+		btnDel = sBtnActive.Copy().Background(clrRedBg).Foreground(clrBright).Render("  Drop  ")
+		btnCancel = sBtnNormal.Render("  Cancel  ")
+	} else {
+		btnDel = sBtnNormal.Render("  Drop  ")
+		btnCancel = sBtnActive.Copy().Background(clrHiliteBg).Foreground(clrBright).Render("  Cancel  ")
+	}
+	buttons := "  " + btnDel + "   " + btnCancel
+
+	hint := sMuted.Render("  h/l  toggle  •  enter  confirm  •  esc / n  cancel")
+	yHint := sMuted.Render("  y  drop immediately")
 
 	content := strings.Join([]string{title, "", nameStr, warning, "", buttons, "", hint, yHint}, "\n")
 	box := sDelModal.Width(max(60, m.width/2)).Render(content)

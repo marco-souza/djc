@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,21 @@ func refreshSongsCmd(repo *library.Repository) tea.Cmd {
 	return func() tea.Msg {
 		songs, err := repo.ListSongs()
 		return refreshMsg{songs: songs, err: err}
+	}
+}
+
+// loadQueuedSongsCmd loads all songs with status "queued" from the database
+// so they can be resumed on startup. It first resets any songs stuck in
+// "downloading" (e.g., from a crash) back to "queued".
+func loadQueuedSongsCmd(repo *library.Repository) tea.Cmd {
+	return func() tea.Msg {
+		// Recover from potential crash: reset stuck "downloading" songs → "queued"
+		if _, err := repo.ResetDownloadingToQueued(); err != nil {
+			return queuedSongsLoadedMsg{err: fmt.Errorf("reset stuck downloads: %w", err)}
+		}
+
+		songs, err := repo.GetQueuedSongs()
+		return queuedSongsLoadedMsg{songs: songs, err: err}
 	}
 }
 
@@ -209,15 +225,31 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 		if latestName == "" {
 			latestName = song.Name
 		}
-		if repoErr := repo.UpdateDownload(song.ID, latestName, latestFilePath, "downloaded", 100); repoErr != nil {
+
+		// Verify the file exists - yt-dlp may report intermediate filename (.mp4)
+		// but actual file after audio extraction has different extension (.flac, etc.)
+		actualFilePath := latestFilePath
+		if _, statErr := os.Stat(latestFilePath); statErr != nil {
+			// File not found at reported path, search for it with correct extension
+			dir := filepath.Dir(latestFilePath)
+			base := strings.TrimSuffix(filepath.Base(latestFilePath), filepath.Ext(filepath.Base(latestFilePath)))
+			// Look for file with expected audio extension
+			expectedExt := "." + song.Format
+			candidatePath := filepath.Join(dir, base+expectedExt)
+			if _, checkErr := os.Stat(candidatePath); checkErr == nil {
+				actualFilePath = candidatePath
+			}
+		}
+
+		if repoErr := repo.UpdateDownload(song.ID, latestName, actualFilePath, "downloaded", 100); repoErr != nil {
 			ch <- downloadEvent{SongID: song.ID, Err: fmt.Errorf("mark song as downloaded: %w", repoErr)}
 			return
 		}
 		ch <- downloadEvent{
 			SongID:    song.ID,
 			Name:      latestName,
-			Format:    extensionOr(song.Format, latestFilePath),
-			FilePath:  latestFilePath,
+			Format:    extensionOr(song.Format, actualFilePath),
+			FilePath:  actualFilePath,
 			Progress:  100,
 			Status:    "downloaded",
 			Completed: true,
@@ -225,7 +257,7 @@ func downloadSong(ctx context.Context, repo *library.Repository, cfg *config.Con
 	}
 }
 
-func saveConfigCmd(cfg *config.Config, inputs [4]textinput.Model) tea.Cmd {
+func saveConfigCmd(cfg *config.Config, inputs [5]textinput.Model) tea.Cmd {
 	// Capture the new values before the closure so the mutation happens on the
 	// shared Config pointer from the bubbletea Update goroutine, not from the
 	// async Cmd goroutine, avoiding a data race.
@@ -233,11 +265,21 @@ func saveConfigCmd(cfg *config.Config, inputs [4]textinput.Model) tea.Cmd {
 	audioFormat := strings.TrimSpace(inputs[1].Value())
 	audioQuality := strings.TrimSpace(inputs[2].Value())
 	outputTemplate := strings.TrimSpace(inputs[3].Value())
+	downloadWorkersStr := strings.TrimSpace(inputs[4].Value())
 	return func() tea.Msg {
 		cfg.DownloadDir = downloadDir
 		cfg.AudioFormat = audioFormat
 		cfg.AudioQuality = audioQuality
 		cfg.OutputTemplate = outputTemplate
+		if workers, err := strconv.Atoi(downloadWorkersStr); err == nil {
+			if workers < config.MinDownloadWorkers {
+				workers = config.MinDownloadWorkers
+			}
+			if workers > config.MaxDownloadWorkers {
+				workers = config.MaxDownloadWorkers
+			}
+			cfg.DownloadWorkers = workers
+		}
 		if err := cfg.Save(); err != nil {
 			return actionDoneMsg{err: fmt.Errorf("save config: %w", err)}
 		}
@@ -279,6 +321,34 @@ func deleteSongCmd(repo *library.Repository, song library.Song) tea.Cmd {
 			return actionDoneMsg{err: fmt.Errorf("delete song: %w", err)}
 		}
 		return actionDoneMsg{message: "Song deleted"}
+	}
+}
+
+// dropDBCmd deletes all songs from the database and removes all downloaded files.
+func dropDBCmd(repo *library.Repository) tea.Cmd {
+	return func() tea.Msg {
+		songs, err := repo.ListSongs()
+		if err != nil {
+			return actionDoneMsg{err: fmt.Errorf("list songs: %w", err)}
+		}
+
+		// Delete all downloaded files.
+		for _, song := range songs {
+			if strings.TrimSpace(song.FilePath) != "" {
+				if err := os.Remove(song.FilePath); err != nil && !os.IsNotExist(err) {
+					return actionDoneMsg{err: fmt.Errorf("delete file %s: %w", song.FilePath, err)}
+				}
+			}
+		}
+
+		// Delete all songs from database.
+		for _, song := range songs {
+			if err := repo.DeleteSong(song.ID); err != nil {
+				return actionDoneMsg{err: fmt.Errorf("delete song from db: %w", err)}
+			}
+		}
+
+		return actionDoneMsg{message: "Database dropped"}
 	}
 }
 
@@ -372,6 +442,14 @@ func findSongFile(song library.Song, dir string) string {
 // with the TUI's raw terminal (which would cause it to exit immediately).
 func playSongCmd(song library.Song) tea.Cmd {
 	return func() tea.Msg {
+		// Verify the file exists before attempting to play.
+		if _, err := os.Stat(song.FilePath); err != nil {
+			if os.IsNotExist(err) {
+				return actionDoneMsg{err: fmt.Errorf("file not found: %s", song.FilePath)}
+			}
+			return actionDoneMsg{err: fmt.Errorf("file not accessible: %w", err)}
+		}
+
 		player, args, ipc := findPlayer()
 		if player == "" {
 			return actionDoneMsg{err: fmt.Errorf("no supported audio player found (install ffplay, mpv, afplay, or aplay)")}

@@ -18,6 +18,7 @@ const (
 	modeConfirm // confirmation / playlist-select modal
 	modeDelete
 	modeConfig
+	modeDropDB // drop database confirmation modal
 )
 
 // ── messages ────────────────────────────────────────────────────────────────
@@ -94,4 +95,11 @@ type downloadsQueuedMsg struct {
 type queuedDownload struct {
 	Song library.Song
 	URL  string
+}
+
+// queuedSongsLoadedMsg is sent on startup with songs that were previously
+// queued and are ready to resume downloading.
+type queuedSongsLoadedMsg struct {
+	songs []library.Song
+	err   error
 }
